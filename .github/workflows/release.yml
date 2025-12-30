@@ -1,0 +1,289 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (ex: 1.2.3)'
+        required: true
+        type: string
+      create_tag:
+        description: 'Create Git tag'
+        required: true
+        type: boolean
+        default: true
+      publish_github_release:
+        description: 'Publish GitHub Release'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      release-version: ${{ steps.version.outputs.release-version }}
+      is-valid: ${{ steps.validate.outputs.is-valid }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_VERSION="${{ github.event.inputs.version }}"
+          else
+            # Extraire la version depuis le tag (v1.2.3 -> 1.2.3)
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            RELEASE_VERSION="${TAG_NAME#v}"
+          fi
+
+          echo "release-version=${RELEASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "::notice::Release Version: ${RELEASE_VERSION}"
+
+      - name: Validate version format
+        id: validate
+        run: |
+          VERSION="${{ steps.version.outputs.release-version }}"
+
+          # Vérifier le format semver (1.2.3 ou 1.2.3-rc.1)
+          if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$ ]]; then
+            echo "::error::Invalid version format: ${VERSION}"
+            echo "::error::Expected format: X.Y.Z or X.Y.Z-rc.N"
+            echo "is-valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Vérifier qu'il n'y a pas de SNAPSHOT
+          if [[ $VERSION =~ SNAPSHOT ]]; then
+            echo "::error::Release version cannot contain SNAPSHOT: ${VERSION}"
+            echo "is-valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Vérifier qu'il n'y a pas de timestamp Maven
+          if [[ $VERSION =~ [0-9]{8}\.[0-9]{6}-[0-9]+ ]]; then
+            echo "::error::Release version cannot contain Maven timestamp: ${VERSION}"
+            echo "is-valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "is-valid=true" >> $GITHUB_OUTPUT
+          echo "::notice::Version validation: PASSED"
+
+      - name: Check if tag exists (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_tag == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.release-version }}"
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists"
+            exit 1
+          fi
+
+          echo "::notice::Tag ${TAG} does not exist yet (will be created)"
+
+  build-and-deploy:
+    name: Build and Deploy Release
+    runs-on: ubuntu-latest
+    needs: validate-release
+    if: needs.validate-release.outputs.is-valid == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Checkout le tag si déclenché par tag
+          ref: ${{ github.ref }}
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+          # Configuration pour deploy vers repository
+          server-id: ossrh # ou votre server-id
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Configure Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Display release information
+        run: |
+          echo "Release Version: ${{ needs.validate-release.outputs.release-version }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+
+      - name: Verify Maven version
+        run: |
+          RELEASE_VERSION="${{ needs.validate-release.outputs.release-version }}"
+
+          # Build avec la version de release
+          mvn -B clean verify \
+            -Drevision=${RELEASE_VERSION} \
+            -Dchangelist="" \
+            -Dsha1="" \
+            -DskipTests=false
+
+          # Vérifier que la version Maven est correcte
+          MAVEN_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout \
+            -Drevision=${RELEASE_VERSION} \
+            -Dchangelist="" \
+            -Dsha1="")
+
+          echo "::notice::Maven version: ${MAVEN_VERSION}"
+
+          if [ "$MAVEN_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::Maven version mismatch!"
+            echo "::error::Expected: ${RELEASE_VERSION}"
+            echo "::error::Got: ${MAVEN_VERSION}"
+            exit 1
+          fi
+
+          # Vérifier qu'il n'y a pas de SNAPSHOT dans la version finale
+          if [[ $MAVEN_VERSION =~ SNAPSHOT ]]; then
+            echo "::error::Maven version contains SNAPSHOT: ${MAVEN_VERSION}"
+            exit 1
+          fi
+
+          echo "::notice::Version verification: PASSED"
+
+      - name: Run tests
+        run: |
+          mvn -B test \
+            -Drevision=${{ needs.validate-release.outputs.release-version }} \
+            -Dchangelist="" \
+            -Dsha1=""
+
+      - name: Deploy to Maven repository
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          mvn -B clean deploy \
+            -Drevision=${{ needs.validate-release.outputs.release-version }} \
+            -Dchangelist="" \
+            -Dsha1="" \
+            -DskipTests=true \
+            -Prelease
+
+      - name: Create Git tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_tag == 'true'
+        run: |
+          VERSION="${{ needs.validate-release.outputs.release-version }}"
+          TAG="v${VERSION}"
+
+          git tag -a "${TAG}" -m "Release ${VERSION}"
+          git push origin "${TAG}"
+
+          echo "::notice::Created and pushed tag: ${TAG}"
+
+      - name: Archive release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate-release.outputs.release-version }}
+          path: |
+            **/target/*.jar
+            **/target/*.war
+            !**/target/*-sources.jar
+            !**/target/*-javadoc.jar
+          retention-days: 90
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-and-deploy]
+    if: |
+      needs.validate-release.outputs.is-valid == 'true' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_github_release == 'true'))
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate-release.outputs.release-version }}
+          path: release-artifacts
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION="${{ needs.validate-release.outputs.release-version }}"
+
+          # Extraire les commits depuis le dernier tag
+          PREVIOUS_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "## What's Changed" > release-notes.md
+            echo "" >> release-notes.md
+            git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" >> release-notes.md
+          else
+            echo "## Initial Release" > release-notes.md
+            echo "" >> release-notes.md
+            echo "First release of the project." >> release-notes.md
+          fi
+
+          echo "" >> release-notes.md
+          echo "## Artifacts" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "Maven artifacts have been deployed to the repository." >> release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.validate-release.outputs.release-version }}
+          name: Release ${{ needs.validate-release.outputs.release-version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(needs.validate-release.outputs.release-version, 'rc') || contains(needs.validate-release.outputs.release-version, 'beta') }}
+          files: |
+            release-artifacts/**/*.jar
+            release-artifacts/**/*.war
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-and-deploy, create-github-release]
+    if: always()
+
+    steps:
+      - name: Release status
+        run: |
+          VERSION="${{ needs.validate-release.outputs.release-version }}"
+
+          if [ "${{ needs.build-and-deploy.result }}" = "success" ]; then
+            echo "::notice::✅ Release ${VERSION} deployed successfully"
+          else
+            echo "::error::❌ Release ${VERSION} failed"
+            exit 1
+          fi

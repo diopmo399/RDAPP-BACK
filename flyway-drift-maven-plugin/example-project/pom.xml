@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>example-flyway-project</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Example Flyway Project</name>
+    <description>Example project using Flyway Drift Maven Plugin</description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!-- Flyway Core (optionnel - juste pour montrer l'usage réel) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <version>10.4.1</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Flyway Drift Maven Plugin -->
+            <plugin>
+                <groupId>com.example</groupId>
+                <artifactId>flyway-drift-maven-plugin</artifactId>
+                <version>1.0.0</version>
+                <executions>
+                    <execution>
+                        <id>check-flyway-drift</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- Auto-détection de origin/main ou origin/master -->
+                    <baseRef></baseRef>
+
+                    <!-- Comparer avec HEAD (branche courante) -->
+                    <targetRef>HEAD</targetRef>
+
+                    <!-- Chemin des migrations -->
+                    <migrationsPath>src/main/resources/db/migration</migrationsPath>
+
+                    <!-- Fail le build si drifts détectés -->
+                    <failIfBehind>true</failIfBehind>
+                    <failIfDiverged>true</failIfDiverged>
+                    <failOnDuplicates>true</failOnDuplicates>
+
+                    <!-- Générer le rapport -->
+                    <generateReport>true</generateReport>
+                    <reportFileName>flyway-drift-report.md</reportFileName>
+                </configuration>
+            </plugin>
+
+            <!-- Maven Compiler Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.12.1</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

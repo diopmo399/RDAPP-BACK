@@ -1,0 +1,68 @@
+name: CI - Flyway Drift Check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build-and-test:
+    name: Build & Test Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Build Plugin
+        run: mvn clean install -DskipTests
+
+      - name: Run Tests
+        run: mvn test
+
+  example-project-check:
+    name: Test with Example Project
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # ⚠️ Important: fetch all history for drift detection
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Install Plugin
+        run: mvn clean install -DskipTests
+
+      - name: Run Flyway Drift Check on Example Project
+        working-directory: example-project
+        run: mvn flyway-drift:check
+
+      - name: Upload Drift Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyway-drift-report
+          path: example-project/target/flyway-drift-report.md
+          retention-days: 7

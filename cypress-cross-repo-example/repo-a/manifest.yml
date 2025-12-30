@@ -1,0 +1,43 @@
+---
+# Cloud Foundry Manifest - Application Configuration
+# Documentation: https://docs.cloudfoundry.org/devguide/deploy-apps/manifest.html
+
+applications:
+  - name: my-app-staging  # Sera override par CF_APP_NAME_STAGING dans le workflow
+    memory: 512M
+    disk_quota: 1G
+    instances: 1
+    buildpacks:
+      - nodejs_buildpack
+    path: .
+    stack: cflinuxfs4  # Ou cflinuxfs3 selon votre CF
+
+    # Variables d'environnement
+    env:
+      NODE_ENV: staging
+      NPM_CONFIG_PRODUCTION: true
+
+    # Routes (URLs publiques)
+    routes:
+      - route: my-app-staging.cfapps.io
+
+    # Health check
+    health-check-type: http
+    health-check-http-endpoint: /health
+    timeout: 180
+
+    # Services à binder (optionnel)
+    # services:
+    #   - my-postgres-db
+    #   - my-redis-cache
+
+    # Commande de démarrage (optionnel)
+    command: npm start
+
+    # Logging
+    # no-route: false
+    # random-route: false
+
+# Pour preprod/production, utilisez des manifests séparés
+# ou utilisez des variables:
+# cf push my-app-staging --var app-name=my-app-staging

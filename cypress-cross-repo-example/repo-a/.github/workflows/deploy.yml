@@ -1,0 +1,228 @@
+name: Deploy Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - preprod
+          - production
+        default: staging
+      ref:
+        description: 'Git ref to deploy (branch/tag/SHA)'
+        required: false
+        type: string
+        default: main
+      triggered_by_repo:
+        description: 'Repository that triggered this deployment'
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: '18'
+
+# Concurrency: annuler les déploiements précédents pour le même environnement
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+
+    # Permissions minimales requises
+    permissions:
+      contents: read
+      deployments: write
+      actions: write
+
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.url }}
+      deployment-status: ${{ steps.deploy.outputs.status }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || 'main' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Display deployment info
+        run: |
+          echo "::notice::Deploying to ${{ github.event.inputs.environment }}"
+          echo "::notice::Ref: ${{ github.event.inputs.ref || 'main' }}"
+          echo "::notice::Triggered by: ${{ github.event.inputs.triggered_by_repo || 'manual' }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: |
+          # Votre commande de build
+          npm run build
+
+          # Exemple : build avec variables d'environnement
+          # npm run build -- --mode ${{ github.event.inputs.environment }}
+
+      - name: Deploy application
+        id: deploy
+        run: |
+          # === MOCK DEPLOYMENT ===
+          # Remplacez par votre vrai déploiement (Vercel, Netlify, AWS, etc.)
+
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+
+          # Simuler le déploiement (3 secondes)
+          echo "Deploying to ${ENVIRONMENT}..."
+          sleep 3
+
+          # Générer l'URL de déploiement selon l'environnement
+          case "$ENVIRONMENT" in
+            staging)
+              DEPLOY_URL="https://staging-app-${{ github.run_number }}.example.com"
+              ;;
+            preprod)
+              DEPLOY_URL="https://preprod-app-${{ github.run_number }}.example.com"
+              ;;
+            production)
+              DEPLOY_URL="https://app.example.com"
+              ;;
+            *)
+              DEPLOY_URL="https://dev-app.example.com"
+              ;;
+          esac
+
+          echo "Deployed to: ${DEPLOY_URL}"
+
+          # Exporter les outputs
+          echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
+          echo "status=success" >> $GITHUB_OUTPUT
+
+          # Sauvegarder l'URL dans un fichier pour l'artifact
+          mkdir -p deployment
+          cat > deployment/deployment.json <<EOF
+          {
+            "baseUrl": "${DEPLOY_URL}",
+            "environment": "${ENVIRONMENT}",
+            "ref": "${{ github.event.inputs.ref || 'main' }}",
+            "deployedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "runId": "${{ github.run_id }}",
+            "runNumber": "${{ github.run_number }}",
+            "triggeredBy": "${{ github.event.inputs.triggered_by_repo || 'manual' }}"
+          }
+          EOF
+
+          cat deployment/deployment.json
+
+          # === EXEMPLE DÉPLOIEMENTS RÉELS ===
+
+          # Vercel:
+          # vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }} > deployment/url.txt
+          # DEPLOY_URL=$(cat deployment/url.txt)
+
+          # Netlify:
+          # netlify deploy --prod --site=${{ secrets.NETLIFY_SITE_ID }} --auth=${{ secrets.NETLIFY_TOKEN }}
+          # DEPLOY_URL=$(netlify status --json | jq -r '.site_url')
+
+          # AWS S3 + CloudFront:
+          # aws s3 sync ./build s3://${{ secrets.S3_BUCKET }}
+          # aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
+          # DEPLOY_URL="https://${{ secrets.CF_DOMAIN }}"
+
+          # Firebase Hosting:
+          # firebase deploy --only hosting:${{ github.event.inputs.environment }} --token=${{ secrets.FIREBASE_TOKEN }}
+          # DEPLOY_URL="https://${{ secrets.FIREBASE_PROJECT_ID }}.web.app"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info-${{ github.run_id }}
+          path: deployment/deployment.json
+          retention-days: 7
+
+      - name: Health check
+        id: healthcheck
+        run: |
+          DEPLOY_URL="${{ steps.deploy.outputs.url }}"
+          MAX_ATTEMPTS=30
+          SLEEP_TIME=10
+
+          echo "Waiting for deployment to be ready at ${DEPLOY_URL}..."
+
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Attempt $i/$MAX_ATTEMPTS..."
+
+            # Health check (mock - remplacez par votre vraie vérification)
+            # Pour un vrai déploiement, vérifiez que l'URL répond avec 200
+
+            # MOCK: Simuler succès après 3 tentatives
+            if [ $i -ge 3 ]; then
+              echo "::notice::✅ Deployment is ready!"
+              echo "ready=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # Vrai health check (décommentez pour production):
+            # if curl -sf -o /dev/null -w "%{http_code}" "${DEPLOY_URL}" | grep -q "200"; then
+            #   echo "::notice::✅ Deployment is ready!"
+            #   echo "ready=true" >> $GITHUB_OUTPUT
+            #   exit 0
+            # fi
+
+            echo "Not ready yet, waiting ${SLEEP_TIME}s..."
+            sleep $SLEEP_TIME
+          done
+
+          echo "::error::❌ Deployment health check failed after ${MAX_ATTEMPTS} attempts"
+          echo "ready=false" >> $GITHUB_OUTPUT
+          exit 1
+
+      - name: Create GitHub Deployment
+        uses: chrnorm/deployment-action@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: ${{ github.event.inputs.environment }}
+          environment-url: ${{ steps.deploy.outputs.url }}
+          production-environment: ${{ github.event.inputs.environment == 'production' }}
+          ref: ${{ github.event.inputs.ref || 'main' }}
+
+      - name: Deployment summary
+        run: |
+          echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Ref:** ${{ github.event.inputs.ref || 'main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ steps.deploy.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Health Check:** ${{ steps.healthcheck.outputs.ready }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifact:** deployment-info-${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Notify deployment status
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+
+    steps:
+      - name: Deployment status
+        run: |
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
+            echo "::notice::✅ Deployment to ${{ github.event.inputs.environment }} succeeded"
+            echo "::notice::URL: ${{ needs.deploy.outputs.deployment-url }}"
+          else
+            echo "::error::❌ Deployment to ${{ github.event.inputs.environment }} failed"
+            exit 1
+          fi

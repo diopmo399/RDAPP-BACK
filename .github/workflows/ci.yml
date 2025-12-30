@@ -1,0 +1,158 @@
+name: CI Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'hotfix/**'
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Generate CI-friendly version
+        id: version
+        run: |
+          # Extraire la version de base depuis le pom.xml
+          BASE_VERSION=$(mvn help:evaluate -Dexpression=revision -q -DforceStdout 2>/dev/null || echo "1.0.0-SNAPSHOT")
+          BASE_VERSION=${BASE_VERSION%-SNAPSHOT}
+
+          # Générer une version unique pour le CI
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RUN_NUMBER=${{ github.run_number }}
+
+          # Format: 1.0.0-ci-123-abc1234-SNAPSHOT
+          CI_VERSION="${BASE_VERSION}-ci-${RUN_NUMBER}-${SHORT_SHA}-SNAPSHOT"
+
+          echo "ci-version=${CI_VERSION}" >> $GITHUB_OUTPUT
+          echo "base-version=${BASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+          echo "::notice::CI Version: ${CI_VERSION}"
+
+      - name: Display build information
+        run: |
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Base Version: ${{ steps.version.outputs.base-version }}"
+          echo "CI Version: ${{ steps.version.outputs.ci-version }}"
+          echo "Commit: ${{ steps.version.outputs.short-sha }}"
+
+      - name: Build with Maven
+        run: |
+          mvn -B clean verify \
+            -Drevision=${{ steps.version.outputs.ci-version }} \
+            -Dchangelist="" \
+            -Dsha1="" \
+            -DskipTests=false
+
+      - name: Run tests
+        run: |
+          mvn -B test \
+            -Drevision=${{ steps.version.outputs.ci-version }} \
+            -Dchangelist="" \
+            -Dsha1=""
+
+      - name: Verify final version
+        run: |
+          FINAL_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout \
+            -Drevision=${{ steps.version.outputs.ci-version }} \
+            -Dchangelist="" \
+            -Dsha1="")
+          echo "::notice::Final Maven version: ${FINAL_VERSION}"
+
+          # Vérifier que la version ne contient pas de timestamp Maven
+          if [[ $FINAL_VERSION =~ [0-9]{8}\.[0-9]{6}-[0-9]+ ]]; then
+            echo "::error::Version contains Maven timestamp: ${FINAL_VERSION}"
+            exit 1
+          fi
+
+      - name: Archive build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ steps.version.outputs.short-sha }}
+          path: |
+            **/target/*.jar
+            **/target/*.war
+            !**/target/*-sources.jar
+            !**/target/*-javadoc.jar
+          retention-days: 7
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ steps.version.outputs.short-sha }}
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+          retention-days: 7
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Run code quality checks
+        run: |
+          # Checkstyle, SpotBugs, etc. si configurés
+          mvn -B checkstyle:check || true
+
+  dependency-check:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Run dependency check
+        run: |
+          # OWASP Dependency Check ou Snyk
+          mvn -B dependency:tree

@@ -1,0 +1,42 @@
+{
+  "testUser": {
+    "email": "test@example.com",
+    "password": "Test1234!",
+    "firstName": "Test",
+    "lastName": "User",
+    "role": "user"
+  },
+  "adminUser": {
+    "email": "admin@example.com",
+    "password": "Admin1234!",
+    "firstName": "Admin",
+    "lastName": "User",
+    "role": "admin"
+  },
+  "users": [
+    {
+      "id": 1,
+      "email": "john.doe@example.com",
+      "firstName": "John",
+      "lastName": "Doe",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 2,
+      "email": "jane.smith@example.com",
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 3,
+      "email": "bob.johnson@example.com",
+      "firstName": "Bob",
+      "lastName": "Johnson",
+      "role": "admin",
+      "active": true
+    }
+  ]
+}

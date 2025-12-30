@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+    <!--
+        Exemple de settings.xml pour releases Maven
+
+        Pour GitHub Actions:
+        - Les credentials sont injectés via setup-java action
+        - Ce fichier n'est PAS nécessaire dans le repository
+
+        Pour développement local:
+        - Placer dans ~/.m2/settings.xml
+        - Configurer les credentials pour Nexus/Artifactory
+    -->
+
+    <servers>
+        <!--
+            Configuration pour Maven Central (via Sonatype OSSRH)
+            Les credentials sont fournis par GitHub Secrets:
+            - MAVEN_USERNAME
+            - MAVEN_PASSWORD
+        -->
+        <server>
+            <id>ossrh</id>
+            <username>${env.MAVEN_USERNAME}</username>
+            <password>${env.MAVEN_PASSWORD}</password>
+        </server>
+
+        <!--
+            Configuration pour GitHub Packages
+            Token: GitHub Personal Access Token avec scope 'write:packages'
+        -->
+        <server>
+            <id>github</id>
+            <username>${env.GITHUB_ACTOR}</username>
+            <password>${env.GITHUB_TOKEN}</password>
+        </server>
+
+        <!--
+            Configuration pour Nexus privé
+        -->
+        <server>
+            <id>nexus-releases</id>
+            <username>${env.NEXUS_USERNAME}</username>
+            <password>${env.NEXUS_PASSWORD}</password>
+        </server>
+
+        <server>
+            <id>nexus-snapshots</id>
+            <username>${env.NEXUS_USERNAME}</username>
+            <password>${env.NEXUS_PASSWORD}</password>
+        </server>
+
+        <!--
+            Configuration pour Artifactory privé
+        -->
+        <server>
+            <id>artifactory-releases</id>
+            <username>${env.ARTIFACTORY_USERNAME}</username>
+            <password>${env.ARTIFACTORY_PASSWORD}</password>
+        </server>
+    </servers>
+
+    <profiles>
+        <!--
+            Profile pour Maven Central (Sonatype OSSRH)
+        -->
+        <profile>
+            <id>ossrh</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <gpg.executable>gpg</gpg.executable>
+                <gpg.passphrase>${env.MAVEN_GPG_PASSPHRASE}</gpg.passphrase>
+            </properties>
+        </profile>
+
+        <!--
+            Profile pour GitHub Packages
+        -->
+        <profile>
+            <id>github</id>
+            <repositories>
+                <repository>
+                    <id>github</id>
+                    <url>https://maven.pkg.github.com/OWNER/REPO</url>
+                    <snapshots>
+                        <enabled>true</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+</settings>

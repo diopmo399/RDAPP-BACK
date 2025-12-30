@@ -1,0 +1,393 @@
+name: Cypress E2E Tests (Cloud Foundry)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - preprod
+        default: staging
+      deploy_ref:
+        description: 'Ref to deploy in Repo A (branch/tag/SHA)'
+        required: false
+        type: string
+      skip_deployment:
+        description: 'Skip deployment (use existing URL)'
+        required: false
+        type: boolean
+        default: false
+      base_url:
+        description: 'Base URL (if skip_deployment=true)'
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: '18'
+  CYPRESS_VERSION: '13.6.2'
+  # Configuration des repos
+  DEPLOY_REPO_OWNER: 'YOUR_GITHUB_USERNAME'  # À REMPLACER
+  DEPLOY_REPO_NAME: 'repo-a'                # Nom de Repo A
+  DEPLOY_WORKFLOW_FILE: 'deploy-cloudfoundry.yml'  # Nom du workflow dans Repo A
+
+# Concurrency: annuler les runs précédents pour la même branche
+concurrency:
+  group: cypress-cf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trigger-deployment:
+    name: Trigger Cloud Foundry Deployment
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_deployment != 'true'
+
+    outputs:
+      run-id: ${{ steps.trigger.outputs.run-id }}
+      run-url: ${{ steps.trigger.outputs.run-url }}
+
+    steps:
+      - name: Determine deployment parameters
+        id: params
+        run: |
+          # Environnement
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            DEPLOY_REF="${{ github.event.inputs.deploy_ref }}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ENVIRONMENT="staging"
+            DEPLOY_REF="main"
+          else
+            ENVIRONMENT="staging"
+            DEPLOY_REF="${{ github.ref_name }}"
+          fi
+
+          # Si deploy_ref n'est pas spécifié, utiliser la même branche que Repo B
+          if [ -z "$DEPLOY_REF" ]; then
+            DEPLOY_REF="${{ github.ref_name }}"
+          fi
+
+          echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
+          echo "deploy-ref=${DEPLOY_REF}" >> $GITHUB_OUTPUT
+
+          echo "::notice::Environment: ${ENVIRONMENT}"
+          echo "::notice::Deploy Ref: ${DEPLOY_REF}"
+
+      - name: Trigger Cloud Foundry deployment in Repo A
+        id: trigger
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_REPO_PAT }}
+        run: |
+          ENVIRONMENT="${{ steps.params.outputs.environment }}"
+          DEPLOY_REF="${{ steps.params.outputs.deploy-ref }}"
+
+          echo "Triggering Cloud Foundry deployment in ${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}..."
+
+          # Déclencher le workflow via GitHub API
+          RESPONSE=$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/workflows/${{ env.DEPLOY_WORKFLOW_FILE }}/dispatches \
+            -f ref="${DEPLOY_REF}" \
+            -f inputs[environment]="${ENVIRONMENT}" \
+            -f inputs[ref]="${DEPLOY_REF}" \
+            -f inputs[triggered_by_repo]="${{ github.repository }}" \
+            2>&1)
+
+          if [ $? -ne 0 ]; then
+            echo "::error::Failed to trigger Cloud Foundry deployment"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "::notice::✅ Cloud Foundry deployment triggered successfully"
+
+          # Attendre que le workflow run soit créé (GitHub API peut prendre quelques secondes)
+          sleep 10
+
+          # Récupérer le run ID du workflow déclenché
+          RUN_ID=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/workflows/${{ env.DEPLOY_WORKFLOW_FILE }}/runs?status=in_progress&per_page=1" \
+            --jq '.workflow_runs[0].id')
+
+          # Si pas de run in_progress, chercher dans queued
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            RUN_ID=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/workflows/${{ env.DEPLOY_WORKFLOW_FILE }}/runs?status=queued&per_page=1" \
+              --jq '.workflow_runs[0].id')
+          fi
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::Could not find triggered workflow run"
+            exit 1
+          fi
+
+          RUN_URL="https://github.com/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/runs/${RUN_ID}"
+
+          echo "run-id=${RUN_ID}" >> $GITHUB_OUTPUT
+          echo "run-url=${RUN_URL}" >> $GITHUB_OUTPUT
+
+          echo "::notice::Workflow Run ID: ${RUN_ID}"
+          echo "::notice::Workflow URL: ${RUN_URL}"
+
+  wait-for-deployment:
+    name: Wait for Cloud Foundry Deployment
+    runs-on: ubuntu-latest
+    needs: trigger-deployment
+    if: github.event.inputs.skip_deployment != 'true'
+
+    # Timeout global: 30 minutes
+    timeout-minutes: 30
+
+    outputs:
+      base-url: ${{ steps.get-url.outputs.base-url }}
+      deployment-info: ${{ steps.get-url.outputs.deployment-info }}
+
+    steps:
+      - name: Wait for Cloud Foundry deployment workflow
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_REPO_PAT }}
+        run: |
+          RUN_ID="${{ needs.trigger-deployment.outputs.run-id }}"
+          RUN_URL="${{ needs.trigger-deployment.outputs.run-url }}"
+          MAX_WAIT_TIME=1800  # 30 minutes
+          POLL_INTERVAL=15     # 15 seconds
+
+          echo "Waiting for Cloud Foundry deployment workflow to complete..."
+          echo "Run ID: ${RUN_ID}"
+          echo "URL: ${RUN_URL}"
+
+          START_TIME=$(date +%s)
+
+          while true; do
+            # Vérifier le temps écoulé
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+
+            if [ $ELAPSED -ge $MAX_WAIT_TIME ]; then
+              echo "::error::Timeout waiting for deployment (${MAX_WAIT_TIME}s)"
+              exit 1
+            fi
+
+            # Récupérer le statut du workflow
+            STATUS=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/runs/${RUN_ID}" \
+              --jq '.status')
+
+            CONCLUSION=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/runs/${RUN_ID}" \
+              --jq '.conclusion')
+
+            echo "Status: ${STATUS}, Conclusion: ${CONCLUSION} (${ELAPSED}s elapsed)"
+
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "::notice::✅ Cloud Foundry deployment completed successfully"
+                break
+              else
+                echo "::error::❌ Cloud Foundry deployment failed with conclusion: ${CONCLUSION}"
+                echo "::error::Check deployment logs: ${RUN_URL}"
+                exit 1
+              fi
+            fi
+
+            echo "Waiting ${POLL_INTERVAL}s..."
+            sleep $POLL_INTERVAL
+          done
+
+      - name: Download deployment artifact
+        id: get-url
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_REPO_PAT }}
+        run: |
+          RUN_ID="${{ needs.trigger-deployment.outputs.run-id }}"
+
+          echo "Downloading deployment artifact..."
+
+          # Lister les artifacts du run
+          ARTIFACT_ID=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/runs/${RUN_ID}/artifacts" \
+            --jq ".artifacts[] | select(.name | startswith(\"deployment-info\")) | .id" | head -1)
+
+          if [ -z "$ARTIFACT_ID" ] || [ "$ARTIFACT_ID" = "null" ]; then
+            echo "::error::Deployment artifact not found"
+            exit 1
+          fi
+
+          echo "Artifact ID: ${ARTIFACT_ID}"
+
+          # Télécharger l'artifact
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ env.DEPLOY_REPO_OWNER }}/${{ env.DEPLOY_REPO_NAME }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            > deployment-artifact.zip
+
+          # Extraire le fichier JSON
+          unzip -q deployment-artifact.zip
+          cat deployment.json
+
+          # Extraire l'URL
+          BASE_URL=$(jq -r '.baseUrl' deployment.json)
+
+          if [ -z "$BASE_URL" ] || [ "$BASE_URL" = "null" ]; then
+            echo "::error::Base URL not found in deployment artifact"
+            exit 1
+          fi
+
+          echo "base-url=${BASE_URL}" >> $GITHUB_OUTPUT
+          echo "deployment-info=$(cat deployment.json | jq -c .)" >> $GITHUB_OUTPUT
+
+          echo "::notice::✅ Cloud Foundry Deployment URL: ${BASE_URL}"
+
+  cypress-tests:
+    name: Run Cypress Tests
+    runs-on: ubuntu-latest
+    needs: [wait-for-deployment]
+    if: always() && (needs.wait-for-deployment.result == 'success' || github.event.inputs.skip_deployment == 'true')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        containers: [1, 2]  # Paralléliser les tests Cypress
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Determine base URL
+        id: url
+        run: |
+          if [ "${{ github.event.inputs.skip_deployment }}" = "true" ]; then
+            BASE_URL="${{ github.event.inputs.base_url }}"
+          else
+            BASE_URL="${{ needs.wait-for-deployment.outputs.base-url }}"
+          fi
+
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::Base URL is empty"
+            exit 1
+          fi
+
+          echo "base-url=${BASE_URL}" >> $GITHUB_OUTPUT
+          echo "::notice::Testing against Cloud Foundry app: ${BASE_URL}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cypress run
+        uses: cypress-io/github-action@v6
+        with:
+          install: false  # Déjà installé via npm ci
+          browser: chrome
+          record: false
+          parallel: true
+          group: 'E2E Tests (Cloud Foundry)'
+          config: baseUrl=${{ steps.url.outputs.base-url }}
+        env:
+          CYPRESS_BASE_URL: ${{ steps.url.outputs.base-url }}
+          # Si vous utilisez Cypress Dashboard:
+          # CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots-cf-${{ matrix.containers }}
+          path: cypress/screenshots
+          retention-days: 7
+
+      - name: Upload Cypress videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos-cf-${{ matrix.containers }}
+          path: cypress/videos
+          retention-days: 7
+
+      - name: Upload Cypress results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-results-cf-${{ matrix.containers }}
+          path: |
+            cypress/results
+            cypress/reports
+          retention-days: 30
+
+  report:
+    name: Test Report
+    runs-on: ubuntu-latest
+    needs: [cypress-tests, wait-for-deployment]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish test summary
+        run: |
+          echo "## 🧪 Cypress E2E Test Results (Cloud Foundry)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.cypress-tests.result }}" = "success" ]; then
+            echo "✅ **All tests passed**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Some tests failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Base URL:** ${{ needs.wait-for-deployment.outputs.base-url || github.event.inputs.base_url }}\" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "${{ needs.wait-for-deployment.outputs.deployment-info }}" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Cloud Foundry Deployment Info" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            echo '${{ needs.wait-for-deployment.outputs.deployment-info }}' | jq . >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: summary
+            });
