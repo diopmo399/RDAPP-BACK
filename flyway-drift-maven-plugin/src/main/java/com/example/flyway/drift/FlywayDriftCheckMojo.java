@@ -84,6 +84,13 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
     @Parameter(property = "flyway.drift.skip", defaultValue = "false")
     private boolean skip;
 
+    /**
+     * Effectue un git fetch avant la vérification pour s'assurer que les branches distantes sont à jour.
+     * Recommandé pour éviter les faux positifs.
+     */
+    @Parameter(property = "flyway.drift.fetchBeforeCheck", defaultValue = "true")
+    private boolean fetchBeforeCheck;
+
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         if (skip) {
@@ -98,6 +105,11 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
         File baseDir = project.getBasedir();
 
         try (GitFileReader gitReader = new GitFileReader(baseDir)) {
+
+            // Effectuer un git fetch si activé
+            if (fetchBeforeCheck) {
+                performGitFetch(gitReader);
+            }
 
             // Déterminer la branche de base si non spécifiée
             String resolvedBaseRef = resolveBaseRef(gitReader);
@@ -159,6 +171,23 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
         } catch (IOException e) {
             throw new MojoExecutionException("Git error: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Effectue un git fetch pour mettre à jour les branches distantes.
+     */
+    private void performGitFetch(GitFileReader gitReader) {
+        getLog().info("Fetching from remote repository...");
+
+        boolean success = gitReader.fetchFromRemoteSafe();
+
+        if (success) {
+            getLog().info("✓ Successfully fetched latest changes from origin.");
+        } else {
+            getLog().warn("⚠ Could not fetch from remote (offline mode or no remote configured).");
+            getLog().warn("  Continuing with local repository state...");
+        }
+        getLog().info("");
     }
 
     /**

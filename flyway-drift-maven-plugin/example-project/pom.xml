@@ -45,7 +45,7 @@
                 </executions>
                 <configuration>
                     <!-- Auto-détection de origin/main ou origin/master -->
-                    <baseRef></baseRef>
+                    <baseRef>origin/main</baseRef>
 
                     <!-- Comparer avec HEAD (branche courante) -->
                     <targetRef>HEAD</targetRef>

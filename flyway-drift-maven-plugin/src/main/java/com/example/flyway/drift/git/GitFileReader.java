@@ -2,6 +2,8 @@ package com.example.flyway.drift.git;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.FetchCommand;
+import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.Repository;
@@ -11,6 +13,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.eclipse.jgit.transport.FetchResult;
 
 import java.io.File;
 import java.io.IOException;
@@ -21,17 +24,30 @@ import java.util.Map;
 /**
  * Utilitaire pour lire les fichiers depuis un repository Git via JGit.
  */
-public class GitFileReader {
+public class GitFileReader implements AutoCloseable {
 
     private final Repository repository;
 
     public GitFileReader(File projectBaseDir) throws IOException {
         FileRepositoryBuilder builder = new FileRepositoryBuilder();
-        this.repository = builder
-                .setGitDir(new File(projectBaseDir, ".git"))
-                .readEnvironment()
-                .findGitDir()
-                .build();
+
+        // Essayer de trouver le .git dans le répertoire actuel
+        File gitDir = new File(projectBaseDir, ".git");
+
+        if (gitDir.exists()) {
+            // .git existe dans le répertoire du projet
+            this.repository = builder
+                    .setGitDir(gitDir)
+                    .readEnvironment()
+                    .build();
+        } else {
+            // .git n'existe pas, chercher dans les répertoires parents
+            this.repository = builder
+                    .setWorkTree(projectBaseDir)
+                    .readEnvironment()
+                    .findGitDir()
+                    .build();
+        }
     }
 
     /**
@@ -172,6 +188,40 @@ public class GitFileReader {
     public String getShortCommitId(String ref) throws IOException {
         ObjectId objectId = resolveRef(ref);
         return objectId.getName().substring(0, 7);
+    }
+
+    /**
+     * Effectue un git fetch pour mettre à jour les branches distantes.
+     * Récupère toutes les branches du remote "origin".
+     *
+     * @return FetchResult avec les détails du fetch
+     * @throws IOException En cas d'erreur I/O
+     * @throws GitAPIException En cas d'erreur Git (pas de remote, pas de connexion, etc.)
+     */
+    public FetchResult fetchFromRemote() throws IOException, GitAPIException {
+        try (Git git = new Git(repository)) {
+            FetchCommand fetchCommand = git.fetch()
+                    .setRemote("origin")
+                    .setRefSpecs("+refs/heads/*:refs/remotes/origin/*");
+
+            return fetchCommand.call();
+        }
+    }
+
+    /**
+     * Effectue un git fetch silencieux (sans lever d'exception si échec).
+     * Utile pour ne pas bloquer le build si pas de connexion réseau.
+     *
+     * @return true si le fetch a réussi, false sinon
+     */
+    public boolean fetchFromRemoteSafe() {
+        try {
+            fetchFromRemote();
+            return true;
+        } catch (IOException | GitAPIException e) {
+            // Échec silencieux
+            return false;
+        }
     }
 
     public void close() {

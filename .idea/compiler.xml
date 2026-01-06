@@ -6,9 +6,10 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="example-flyway-project" />
         <module name="gatling-shadow-maven-plugin" />
-        <module name="flyway-drift-maven-plugin" />
         <module name="openapi-gatling-maven-plugin" />
+        <module name="flyway-drift-maven-plugin" />
       </profile>
     </annotationProcessing>
   </component>
