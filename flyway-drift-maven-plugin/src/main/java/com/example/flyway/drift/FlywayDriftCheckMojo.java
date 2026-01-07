@@ -94,12 +94,12 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         if (skip) {
-            getLog().info("Flyway drift check skipped.");
+            getLog().info("Vérification des drifts Flyway ignorée.");
             return;
         }
 
         getLog().info("========================================");
-        getLog().info("Flyway Migration Drift Check");
+        getLog().info("Vérification des Drifts de Migrations Flyway");
         getLog().info("========================================");
 
         File baseDir = project.getBasedir();
@@ -115,22 +115,22 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
             String resolvedBaseRef = resolveBaseRef(gitReader);
             String resolvedTargetRef = targetRef;
 
-            getLog().info("Base Ref:       " + resolvedBaseRef);
-            getLog().info("Target Ref:     " + resolvedTargetRef);
-            getLog().info("Migrations Path: " + migrationsPath);
+            getLog().info("Branche de base:       " + resolvedBaseRef);
+            getLog().info("Branche cible:         " + resolvedTargetRef);
+            getLog().info("Chemin des migrations: " + migrationsPath);
             getLog().info("");
 
             // Vérifier que les refs existent
             validateRefs(gitReader, resolvedBaseRef, resolvedTargetRef);
 
             // Lire les fichiers de migration depuis Git
-            getLog().info("Reading migrations from base ref...");
+            getLog().info("Lecture des migrations depuis la branche de base...");
             Map<String, String> baseFiles = gitReader.listMigrationFiles(resolvedBaseRef, migrationsPath);
-            getLog().info("Found " + baseFiles.size() + " migration file(s) in base.");
+            getLog().info("Trouvé " + baseFiles.size() + " fichier(s) de migration dans la base.");
 
-            getLog().info("Reading migrations from target ref...");
+            getLog().info("Lecture des migrations depuis la branche cible...");
             Map<String, String> targetFiles = gitReader.listMigrationFiles(resolvedTargetRef, migrationsPath);
-            getLog().info("Found " + targetFiles.size() + " migration file(s) in target.");
+            getLog().info("Trouvé " + targetFiles.size() + " fichier(s) de migration dans la cible.");
             getLog().info("");
 
             // Parser les migrations
@@ -138,12 +138,12 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
             List<FlywayMigration> baseMigrations = parser.parseMigrations(baseFiles);
             List<FlywayMigration> targetMigrations = parser.parseMigrations(targetFiles);
 
-            getLog().info("Parsed " + baseMigrations.size() + " migration(s) from base.");
-            getLog().info("Parsed " + targetMigrations.size() + " migration(s) from target.");
+            getLog().info("Analysé " + baseMigrations.size() + " migration(s) depuis la base.");
+            getLog().info("Analysé " + targetMigrations.size() + " migration(s) depuis la cible.");
             getLog().info("");
 
             // Détecter les drifts
-            getLog().info("Analyzing drifts...");
+            getLog().info("Analyse des drifts...");
             DriftDetector detector = new DriftDetector(baseMigrations, targetMigrations);
             DriftDetector.DriftResult result = detector.detectDrifts();
 
@@ -157,7 +157,7 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
                 reportFile.getParentFile().mkdirs();
                 report.generateMarkdownReport(reportFile);
                 getLog().info("");
-                getLog().info("Report generated: " + reportFile.getAbsolutePath());
+                getLog().info("Rapport généré: " + reportFile.getAbsolutePath());
             }
 
             // Fail le build si nécessaire
@@ -165,7 +165,7 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
                 handleDrifts(result);
             } else {
                 getLog().info("");
-                getLog().info("✅ No drifts detected. Build can proceed.");
+                getLog().info("✅ Aucun drift détecté. Le build peut continuer.");
             }
 
         } catch (IOException e) {
@@ -177,15 +177,15 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
      * Effectue un git fetch pour mettre à jour les branches distantes.
      */
     private void performGitFetch(GitFileReader gitReader) {
-        getLog().info("Fetching from remote repository...");
+        getLog().info("Récupération depuis le dépôt distant...");
 
         boolean success = gitReader.fetchFromRemoteSafe();
 
         if (success) {
-            getLog().info("✓ Successfully fetched latest changes from origin.");
+            getLog().info("✓ Derniers changements récupérés avec succès depuis origin.");
         } else {
-            getLog().warn("⚠ Could not fetch from remote (offline mode or no remote configured).");
-            getLog().warn("  Continuing with local repository state...");
+            getLog().warn("⚠ Impossible de récupérer depuis le dépôt distant (mode hors ligne ou pas de remote configuré).");
+            getLog().warn("  Continuation avec l'état local du dépôt...");
         }
         getLog().info("");
     }
@@ -201,11 +201,11 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
         // Détection automatique
         try {
             String detected = gitReader.detectMainBranch();
-            getLog().info("Auto-detected base branch: " + detected);
+            getLog().info("Branche de base auto-détectée: " + detected);
             return detected;
         } catch (IOException e) {
             throw new MojoExecutionException(
-                    "Cannot auto-detect base branch. Please specify <baseRef> in plugin configuration.", e);
+                    "Impossible de détecter automatiquement la branche de base. Veuillez spécifier <baseRef> dans la configuration du plugin.", e);
         }
     }
 
@@ -214,12 +214,12 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
      */
     private void validateRefs(GitFileReader gitReader, String base, String target) throws MojoFailureException {
         if (!gitReader.refExists(base)) {
-            throw new MojoFailureException("Base ref does not exist: " + base +
-                    "\n\nHint: If running in CI, ensure fetch-depth is set to 0 in GitHub Actions checkout.");
+            throw new MojoFailureException("La référence de base n'existe pas: " + base +
+                    "\n\nAstuce: Si vous êtes en CI, assurez-vous que fetch-depth est défini à 0 dans GitHub Actions checkout.");
         }
 
         if (!gitReader.refExists(target)) {
-            throw new MojoFailureException("Target ref does not exist: " + target);
+            throw new MojoFailureException("La référence cible n'existe pas: " + target);
         }
     }
 
@@ -229,29 +229,29 @@ public class FlywayDriftCheckMojo extends AbstractMojo {
     private void handleDrifts(DriftDetector.DriftResult result) throws MojoFailureException {
         boolean shouldFail = false;
         StringBuilder errorMessage = new StringBuilder();
-        errorMessage.append("\n❌ FLYWAY MIGRATION DRIFT DETECTED\n\n");
+        errorMessage.append("\n❌ DRIFT DE MIGRATION FLYWAY DÉTECTÉ\n\n");
 
         if (failOnDuplicates && (!result.baseDuplicates.isEmpty() || !result.targetDuplicates.isEmpty())) {
             shouldFail = true;
-            errorMessage.append("🔴 Duplicate migrations found.\n");
+            errorMessage.append("🔴 Migrations dupliquées trouvées.\n");
         }
 
         if (failIfBehind && !result.behindMigrations.isEmpty()) {
             shouldFail = true;
-            errorMessage.append("🟠 Behind migrations detected (missing in target branch).\n");
+            errorMessage.append("🟠 Migrations manquantes détectées (absentes dans la branche cible).\n");
         }
 
         if (failIfDiverged && !result.divergedMigrations.isEmpty()) {
             shouldFail = true;
-            errorMessage.append("🟡 Diverged migrations detected (same version, different content).\n");
+            errorMessage.append("🟡 Migrations divergentes détectées (même version, contenu différent).\n");
         }
 
         if (shouldFail) {
-            errorMessage.append("\nSee report above for details.\n");
-            errorMessage.append("\nTo fix:\n");
-            errorMessage.append("  - Duplicates: Remove duplicate migration files.\n");
-            errorMessage.append("  - Behind: Merge or rebase with base branch.\n");
-            errorMessage.append("  - Diverged: Never modify existing migrations. Create a new migration instead.\n");
+            errorMessage.append("\nConsultez le rapport ci-dessus pour plus de détails.\n");
+            errorMessage.append("\nPour corriger:\n");
+            errorMessage.append("  - Doublons: Supprimez les fichiers de migration dupliqués.\n");
+            errorMessage.append("  - En retard: Fusionnez ou rebasez avec la branche de base.\n");
+            errorMessage.append("  - Divergentes: Ne modifiez jamais les migrations existantes. Créez plutôt une nouvelle migration.\n");
 
             throw new MojoFailureException(errorMessage.toString());
         }

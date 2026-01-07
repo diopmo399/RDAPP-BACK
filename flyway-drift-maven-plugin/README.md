@@ -18,11 +18,13 @@ Plugin Maven professionnel qui détecte les **drifts de migrations Flyway** entr
    - **Diverged** : Même version, contenu différent (hash)
    - **Duplicates** : Plusieurs fichiers avec la même version
 
+✅ **Fetch automatique** des branches distantes (configurable)
 ✅ **Compatible CI/CD** (GitHub Actions, GitLab CI, Jenkins)
 ✅ **Aucune modification du workspace**
 ✅ **Rapports Markdown** générés dans `target/`
 ✅ **Auto-détection** de `origin/main` ou `origin/master`
 ✅ **Support Repeatable migrations** (`R__*.sql`)
+✅ **Messages en français** 🇫🇷
 
 ## 📦 Installation
 
@@ -44,18 +46,34 @@ mvn clean install
       <version>1.0.0</version>
       <executions>
         <execution>
+          <id>check-flyway-drift</id>
+          <phase>validate</phase>
           <goals>
             <goal>check</goal>
           </goals>
         </execution>
       </executions>
       <configuration>
-        <baseRef>origin/main</baseRef>
+        <!-- Branche de référence (auto-détection si vide) -->
+        <baseRef>main</baseRef>
+
+        <!-- Branche à vérifier (HEAD par défaut) -->
         <targetRef>HEAD</targetRef>
+
+        <!-- ⚠️ IMPORTANT: Chemin RELATIF À LA RACINE DU REPO GIT -->
         <migrationsPath>src/main/resources/db/migration</migrationsPath>
+
+        <!-- Faire un git fetch avant la vérification -->
+        <fetchBeforeCheck>true</fetchBeforeCheck>
+
+        <!-- Fail le build si des drifts sont détectés -->
         <failIfBehind>true</failIfBehind>
         <failIfDiverged>true</failIfDiverged>
         <failOnDuplicates>true</failOnDuplicates>
+
+        <!-- Générer un rapport Markdown -->
+        <generateReport>true</generateReport>
+        <reportFileName>flyway-drift-report.md</reportFileName>
       </configuration>
     </plugin>
   </plugins>
@@ -66,9 +84,10 @@ mvn clean install
 
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
-| `baseRef` | Auto-détecté | Branche de base (ex: `origin/main`) |
+| `baseRef` | Auto-détecté | Branche de base (ex: `main`, `origin/main`) |
 | `targetRef` | `HEAD` | Branche cible à comparer |
-| `migrationsPath` | `src/main/resources/db/migration` | Chemin des migrations |
+| `migrationsPath` | - | **Chemin RELATIF à la racine du repo Git** |
+| `fetchBeforeCheck` | `true` | Faire un `git fetch` avant vérification |
 | `failIfBehind` | `true` | Fail si migrations manquantes |
 | `failIfDiverged` | `true` | Fail si migrations divergentes |
 | `failOnDuplicates` | `true` | Fail si migrations dupliquées |
@@ -76,62 +95,103 @@ mvn clean install
 | `reportFileName` | `flyway-drift-report.md` | Nom du fichier de rapport |
 | `skip` | `false` | Skip l'exécution |
 
+### ⚠️ Configuration Critique : `migrationsPath`
+
+Le `migrationsPath` doit être **relatif à la racine du repository Git**, pas au `pom.xml`.
+
+**Exemple avec structure mono-repo** :
+
+```
+RDAPP_BACK/                          ← Racine Git (.git est ici)
+├── .git/
+├── flyway-drift-maven-plugin/
+│   ├── pom.xml
+│   └── example-project/
+│       ├── pom.xml                  ← Votre pom.xml
+│       └── src/
+│           └── main/
+│               └── resources/
+│                   └── db/
+│                       └── migration/   ← Vos migrations
+```
+
+**Configuration correcte** :
+```xml
+<migrationsPath>flyway-drift-maven-plugin/example-project/src/main/resources/db/migration</migrationsPath>
+```
+
+**Configuration incorrecte** :
+```xml
+<!-- ❌ FAUX : relatif au pom.xml -->
+<migrationsPath>src/main/resources/db/migration</migrationsPath>
+```
+
+**Comment trouver le bon chemin** :
+```bash
+# 1. Lister les fichiers dans Git
+git ls-tree -r HEAD --name-only | grep migration
+
+# 2. Copier le chemin jusqu'au dossier migration
+# Exemple de sortie:
+# flyway-drift-maven-plugin/example-project/src/main/resources/db/migration/V1__init.sql
+#                                                                          ^^^^^^^^^^^^
+#                                Utilisez ce chemin dans migrationsPath
+```
+
 ## 🚀 Utilisation
 
-### Exécution locale
+### Commande de base
 
 ```bash
-# Comparer HEAD avec origin/main
 mvn flyway-drift:check
+```
 
-# Comparer une branche spécifique avec main
-mvn flyway-drift:check -Dflyway.drift.targetRef=feature/my-branch
+### Avec paramètres
+
+```bash
+# Comparer avec une branche spécifique
+mvn flyway-drift:check -Dflyway.drift.baseRef=origin/main
+
+# Désactiver le fetch automatique
+mvn flyway-drift:check -Dflyway.drift.fetchBeforeCheck=false
 
 # Comparer deux branches
 mvn flyway-drift:check \
   -Dflyway.drift.baseRef=origin/develop \
   -Dflyway.drift.targetRef=origin/feature/my-branch
+
+# Ignorer la vérification
+mvn flyway-drift:check -Dflyway.drift.skip=true
 ```
 
-### GitHub Actions
+## 🔄 Fetch Automatique
 
-```yaml
-name: Flyway Drift Check
+Par défaut, le plugin fait un `git fetch origin` avant la vérification pour s'assurer que les branches distantes sont à jour.
 
-on:
-  pull_request:
-    branches:
-      - main
-      - develop
-
-jobs:
-  flyway-drift:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # ⚠️ IMPORTANT : fetch all history
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'maven'
-
-      - name: Check Flyway Drift
-        run: mvn flyway-drift:check
+**Activation** (par défaut) :
+```xml
+<fetchBeforeCheck>true</fetchBeforeCheck>
 ```
 
-**⚠️ Important** : `fetch-depth: 0` est **obligatoire** pour accéder à l'historique complet des branches.
+**Désactivation** :
+```xml
+<fetchBeforeCheck>false</fetchBeforeCheck>
+```
+
+**En ligne de commande** :
+```bash
+mvn flyway-drift:check -Dflyway.drift.fetchBeforeCheck=false
+```
+
+**Comportement** :
+- ✅ Si le fetch réussit : `✓ Derniers changements récupérés avec succès depuis origin.`
+- ⚠️ Si le fetch échoue (pas de réseau) : Continue en mode silencieux avec l'état local
 
 ## 📊 Exemples de détection
 
-### 1. Behind (Migrations manquantes)
+### 1. 🟠 Behind (Migrations manquantes)
 
-**Base (`origin/main`)** :
+**Base (`main`)** :
 ```
 V1__init.sql
 V2__add_users.sql
@@ -146,15 +206,33 @@ V2__add_users.sql
 
 **Résultat** :
 ```
-🟠 BEHIND MIGRATIONS (present in base, missing in target):
+================================================================================
+RAPPORT DE DRIFT DES MIGRATIONS FLYWAY
+================================================================================
+
+Branche de base:   main
+Branche cible:     HEAD
+
+❌ DRIFTS DÉTECTÉS: 1 problème(s)
+
+🟠 MIGRATIONS MANQUANTES (présentes dans la base, absentes de la cible):
   - V3__add_products (hash: abc12345)
 
-❌ BUILD FAILED
+================================================================================
+
+❌ DRIFT DE MIGRATION FLYWAY DÉTECTÉ
+
+🟠 Migrations manquantes détectées (absentes dans la branche cible).
+
+Consultez le rapport ci-dessus pour plus de détails.
+
+Pour corriger:
+  - En retard: Fusionnez ou rebasez avec la branche de base.
 ```
 
-### 2. Diverged (Même version, contenu différent)
+### 2. 🟡 Diverged (Même version, contenu différent)
 
-**Base (`origin/main`)** :
+**Base (`main`)** :
 ```sql
 -- V1__init.sql
 CREATE TABLE users (id INT);
@@ -168,15 +246,33 @@ CREATE TABLE users (id BIGINT);  -- Modifié !
 
 **Résultat** :
 ```
-🟡 DIVERGED MIGRATIONS (same version, different content):
-  - V1__init
-    Base:   e3b0c442b
-    Target: 9f86d081a
+================================================================================
+RAPPORT DE DRIFT DES MIGRATIONS FLYWAY
+================================================================================
 
-❌ BUILD FAILED
+Branche de base:   main
+Branche cible:     HEAD
+
+❌ DRIFTS DÉTECTÉS: 1 problème(s)
+
+🟡 MIGRATIONS DIVERGENTES (même version, contenu différent):
+  - V1__init
+    Base:  e3b0c442b4f2e123
+    Cible: 9f86d081a4d0e456
+
+================================================================================
+
+❌ DRIFT DE MIGRATION FLYWAY DÉTECTÉ
+
+🟡 Migrations divergentes détectées (même version, contenu différent).
+
+Consultez le rapport ci-dessus pour plus de détails.
+
+Pour corriger:
+  - Divergentes: Ne modifiez jamais les migrations existantes. Créez plutôt une nouvelle migration.
 ```
 
-### 3. Duplicates (Même version, plusieurs fichiers)
+### 3. 🔴 Duplicates (Même version, plusieurs fichiers)
 
 **Target (`HEAD`)** :
 ```
@@ -187,12 +283,47 @@ V2__add_users.sql
 
 **Résultat** :
 ```
-🔴 DUPLICATE MIGRATIONS IN TARGET (HEAD):
-  - V1 (2 files)
+================================================================================
+RAPPORT DE DRIFT DES MIGRATIONS FLYWAY
+================================================================================
+
+Branche de base:   main
+Branche cible:     HEAD
+
+❌ DRIFTS DÉTECTÉS: 1 problème(s)
+
+🔴 MIGRATIONS DUPLIQUÉES DANS LA CIBLE (HEAD):
+  - V1 (2 fichiers)
     • V1__init.sql
     • V1__initialize.sql
 
-❌ BUILD FAILED
+================================================================================
+
+❌ DRIFT DE MIGRATION FLYWAY DÉTECTÉ
+
+🔴 Migrations dupliquées trouvées.
+
+Consultez le rapport ci-dessus pour plus de détails.
+
+Pour corriger:
+  - Doublons: Supprimez les fichiers de migration dupliqués.
+```
+
+### 4. ✅ Aucun drift
+
+**Résultat** :
+```
+================================================================================
+RAPPORT DE DRIFT DES MIGRATIONS FLYWAY
+================================================================================
+
+Branche de base:   main
+Branche cible:     HEAD
+
+✅ Aucun drift détecté. Toutes les migrations sont cohérentes.
+================================================================================
+
+✅ Aucun drift détecté. Le build peut continuer.
 ```
 
 ## 📄 Rapport généré
@@ -200,39 +331,82 @@ V2__add_users.sql
 Le plugin génère un rapport Markdown dans `target/flyway-drift-report.md` :
 
 ```markdown
-# Flyway Migration Drift Report
+# Rapport de Drift des Migrations Flyway
 
-**Generated:** 2025-12-30 12:00:00
+**Généré le:** 2026-01-06 20:36:25
 
-**Base Ref:** `origin/main`
+**Branche de base:** `main`
 
-**Target Ref:** `HEAD`
+**Branche cible:** `HEAD`
 
-## ❌ Drifts Detected
+## ❌ Drifts Détectés
 
-**Total Issues:** 3
+**Nombre total de problèmes:** 2
 
-### 🟠 Behind Migrations
+### 🟠 Migrations Manquantes (En Retard)
 
-Migrations present in `origin/main` but missing in `HEAD`:
+Migrations présentes dans `main` mais absentes de `HEAD`:
 
 | Migration | Type | Hash |
 |-----------|------|------|
-| `V3__add_products` | VERSIONED | `abc12345` |
+| `V4__add_categories_table` | VERSIONED | `d3afe5e4` |
 
-### 🟡 Diverged Migrations
+### 🟡 Migrations Divergentes
 
-Migrations with same version but different content:
+Migrations avec la même version mais un contenu différent:
 
-| Migration | Base Hash | Target Hash |
-|-----------|-----------|-------------|
-| `V1__init` | `e3b0c442` | `9f86d081` |
+| Migration | Hash Base | Hash Cible |
+|-----------|-----------|------------|
+| `V2__add_products_table` | `163a93c0` | `82e4b06c` |
 
-## 📋 Recommendations
+## 📋 Recommandations
 
-- **Behind:** Merge or rebase `HEAD` with `origin/main` to get missing migrations.
-- **Diverged:** Content mismatch detected. Never modify existing migrations. Create a new migration instead.
+- **En retard:** Fusionnez ou rebasez `HEAD` avec `main` pour récupérer les migrations manquantes.
+- **Divergentes:** Contenu différent détecté. Ne modifiez jamais une migration existante. Créez plutôt une nouvelle migration.
 ```
+
+## 🚦 Intégration CI/CD
+
+### GitHub Actions
+
+```yaml
+name: Flyway Drift Check
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # ⚠️ IMPORTANT : fetch all history
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Check Flyway Drift
+        run: mvn flyway-drift:check
+```
+
+### GitLab CI
+
+```yaml
+flyway-drift-check:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - mvn flyway-drift:check
+  only:
+    - merge_requests
+```
+
+**⚠️ Important** : `fetch-depth: 0` est **obligatoire** pour accéder à l'historique complet des branches.
 
 ## 🔧 Convention Flyway
 
@@ -258,77 +432,63 @@ R__insert_data.sql
 
 **Format** : `R__<description>.sql`
 
-## 🛡️ Cas limites gérés
+## 🐛 Dépannage
 
-### Repository shallow
+### Le plugin trouve 0 fichiers
 
-Si vous utilisez `fetch-depth: 1` en CI, le plugin échouera avec un message clair :
+**Cause** : Le `migrationsPath` est incorrect.
 
-```
-Base ref does not exist: origin/main
+**Solution** :
+```bash
+# Lister les fichiers dans Git
+git ls-tree -r HEAD --name-only | grep migration
 
-Hint: If running in CI, ensure fetch-depth is set to 0 in GitHub Actions checkout.
-```
-
-**Solution** : Utilisez `fetch-depth: 0` dans `actions/checkout`.
-
-### Premier commit
-
-Si la branche cible est au premier commit (pas d'historique), le plugin skip proprement :
-
-```
-✅ No drifts detected. Build can proceed.
+# Utiliser ce chemin dans votre pom.xml
 ```
 
-### Ref inexistante
+### Le fetch ne fonctionne pas
 
+**Cause** : Le fetch s'exécute mais n'a rien à récupérer (tout est à jour).
+
+**Vérification** :
+```bash
+git log origin/main --oneline -1  # Version distante
+git log main --oneline -1         # Version locale
 ```
-❌ Base ref does not exist: origin/develop
 
-Please specify a valid <baseRef> in plugin configuration.
+Si `main` local est en avance sur `origin/main`, poussez vos commits :
+```bash
+git push origin main
+```
+
+### "La référence de base n'existe pas"
+
+**Cause** : La branche n'existe pas localement.
+
+**Solution** :
+```bash
+git fetch origin
+git branch -a  # Vérifier les branches disponibles
+```
+
+En CI/CD, assurez-vous d'utiliser `fetch-depth: 0` dans GitHub Actions.
+
+### Le plugin ne détecte pas mes modifications
+
+**Cause** : Les fichiers modifiés ne sont **pas committés**.
+
+**Important** : Le plugin lit les **commits Git**, pas les fichiers modifiés dans le working directory.
+
+**Solution** :
+```bash
+git add .
+git commit -m "test drift"
+mvn flyway-drift:check
 ```
 
 ## 🧪 Tests
 
-### Test unitaire (exemple)
-
-Créez un test Maven IT :
-
-```xml
-<project>
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>com.example</groupId>
-        <artifactId>flyway-drift-maven-plugin</artifactId>
-        <version>1.0.0</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>check</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
-</project>
-```
-
-Créez des migrations de test :
-
-```
-src/test/resources/db/migration/
-  ├── V1__init.sql
-  ├── V2__add_users.sql
-  └── V3__add_products.sql
-```
-
-Exécutez :
-
-```bash
-mvn verify
-```
+Pour tester le plugin avec des scénarios réels, consultez le fichier [`SCENARIOS-DE-TEST.md`](example-project/SCENARIOS-DE-TEST.md) dans le projet d'exemple.
 
 ## 📚 Architecture
 
@@ -342,7 +502,7 @@ flyway-drift-maven-plugin/
     ├── model/
     │   └── FlywayMigration.java         # Modèle migration
     ├── git/
-    │   └── GitFileReader.java           # Lecture Git via JGit
+    │   └── GitFileReader.java           # Lecture Git via JGit + Fetch
     ├── parser/
     │   └── MigrationParser.java         # Parser migrations
     ├── detector/
@@ -353,14 +513,15 @@ flyway-drift-maven-plugin/
 
 ### Algorithme de détection
 
-1. **Lecture des fichiers** via JGit depuis les deux refs
-2. **Parsing** des migrations (extraction version, description)
-3. **Calcul SHA-256** du contenu de chaque fichier
-4. **Détection** :
+1. **Fetch automatique** (si activé) via JGit
+2. **Lecture des fichiers** via JGit depuis les deux refs
+3. **Parsing** des migrations (extraction version, description)
+4. **Calcul SHA-256** du contenu de chaque fichier
+5. **Détection** :
    - Duplicates : Map version → List<Migration>
    - Behind : Migrations dans base ∖ target
    - Diverged : Même version, hash différent
-5. **Génération** du rapport Markdown
+6. **Génération** du rapport Markdown en français
 
 ## 🚫 Limitations
 
@@ -385,12 +546,12 @@ MIT License
 ## 📞 Support
 
 Pour toute question ou problème :
-- Ouvrir une issue sur GitHub
+- Consulter [`SCENARIOS-DE-TEST.md`](example-project/SCENARIOS-DE-TEST.md)
 - Consulter la documentation Flyway : https://flywaydb.org/
 
 ---
 
 **Version** : 1.0.0
-**Auteur** : Flyway Drift Plugin Team
+**Auteur** : Mohamed DIOP (diopmo0312@gmail.com)
 **Java** : 17+
 **Maven** : 3.6+
