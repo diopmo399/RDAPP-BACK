@@ -216,10 +216,12 @@ public class GitFileReader implements AutoCloseable {
      */
     public boolean fetchFromRemoteSafe() {
         try {
-            fetchFromRemote();
-            return true;
+            FetchResult result = fetchFromRemote();
+            // Vérifier que le fetch a vraiment récupéré quelque chose
+            return result != null;
         } catch (IOException | GitAPIException e) {
-            // Échec silencieux
+            // Échec silencieux - logger pour debug
+            System.err.println("[DEBUG] Fetch failed: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             return false;
         }
     }

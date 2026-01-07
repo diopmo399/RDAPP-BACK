@@ -1,6 +1,8 @@
 package com.gatling.openapi.plugin;
 
 import io.swagger.v3.oas.models.OpenAPI;
+import org.apache.maven.model.Plugin;
+import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
@@ -10,6 +12,7 @@ import org.apache.maven.project.MavenProject;
 
 import java.io.File;
 import java.util.List;
+import java.util.Set;
 
 @Mojo(name = "generate-gatling-data", defaultPhase = LifecyclePhase.GENERATE_TEST_RESOURCES)
 public class GenerateGatlingDataMojo extends AbstractMojo {
@@ -52,6 +55,13 @@ public class GenerateGatlingDataMojo extends AbstractMojo {
 
     @Parameter(property = "generateScalaHelper", defaultValue = "true")
     private boolean generateScalaHelper;
+
+    /**
+     * Langage cible pour le helper Gatling: 'scala' ou 'java'.
+     * Si non spécifié, détection automatique basée sur les dépendances et plugins du projet.
+     */
+    @Parameter(property = "language")
+    private String language;
 
     public enum OutputFormat {
         CSV, JSON, BOTH
@@ -111,11 +121,11 @@ public class GenerateGatlingDataMojo extends AbstractMojo {
                 endpointGenerator.generateEndpointDatasets(endpointsDir, includePaths, format);
             }
 
-            // Générer le helper Scala
+            // Générer le helper (Scala ou Java)
             if (generateScalaHelper) {
-                getLog().info("Génération du helper Scala...");
-                ScalaHelperGenerator scalaGenerator = new ScalaHelperGenerator();
-                scalaGenerator.generate(outputDir, endpointsDir);
+                String targetLanguage = resolveLanguage();
+                getLog().info("Langage cible détecté: " + targetLanguage);
+                generateHelper(targetLanguage, outputDir, endpointsDir);
             }
 
             getLog().info("=== Génération terminée avec succès ===");
@@ -143,6 +153,190 @@ public class GenerateGatlingDataMojo extends AbstractMojo {
             JsonWriter jsonWriter = new JsonWriter(jsonFile);
             jsonWriter.writeSchemaData(schema, rows, exampleGenerator);
             getLog().info("  - " + jsonFile.getName() + " (" + rows + " lignes)");
+        }
+    }
+
+    /**
+     * Résout le langage à utiliser (configuration explicite ou détection automatique).
+     */
+    private String resolveLanguage() throws MojoExecutionException {
+        // 1. Si spécifié explicitement dans la configuration
+        if (language != null && !language.trim().isEmpty()) {
+            String lang = language.trim().toLowerCase();
+            if ("scala".equals(lang) || "java".equals(lang)) {
+                getLog().info("→ Langage spécifié explicitement: " + lang);
+                return lang;
+            } else {
+                throw new MojoExecutionException(
+                    "Langage invalide: '" + language + "'. Utilisez 'scala' ou 'java'.");
+            }
+        }
+
+        // 2. Détection automatique
+        getLog().info("→ Détection automatique du langage...");
+
+        // Méthode 1: Vérifier les dépendances
+        String langFromDeps = detectLanguageFromDependencies();
+        if (langFromDeps != null) {
+            return langFromDeps;
+        }
+
+        // Méthode 2: Vérifier les plugins Maven
+        String langFromPlugins = detectLanguageFromPlugins();
+        if (langFromPlugins != null) {
+            return langFromPlugins;
+        }
+
+        // Méthode 3: Vérifier les répertoires sources
+        String langFromDirs = detectLanguageFromSourceDirs();
+        if (langFromDirs != null) {
+            return langFromDirs;
+        }
+
+        // Par défaut: Scala (pour la rétrocompatibilité)
+        getLog().info("→ Aucun indicateur trouvé, utilisation de Scala par défaut");
+        return "scala";
+    }
+
+    /**
+     * Détecte le langage via les dépendances Maven.
+     */
+    private String detectLanguageFromDependencies() {
+        Set<Artifact> artifacts = project.getArtifacts();
+
+        for (Artifact artifact : artifacts) {
+            String groupId = artifact.getGroupId();
+            String artifactId = artifact.getArtifactId();
+
+            // Vérifier scala-library
+            if ("org.scala-lang".equals(groupId) && "scala-library".equals(artifactId)) {
+                getLog().info("  ✓ Scala détecté via dépendance: scala-library");
+                return "scala";
+            }
+
+            // Vérifier Gatling Scala
+            if ("io.gatling".equals(groupId) && artifactId.contains("scala")) {
+                getLog().info("  ✓ Scala détecté via dépendance Gatling: " + artifactId);
+                return "scala";
+            }
+
+            // Vérifier Gatling Java
+            if ("io.gatling".equals(groupId) && (artifactId.contains("java") || artifactId.equals("gatling-javaapi"))) {
+                getLog().info("  ✓ Java détecté via dépendance Gatling Java: " + artifactId);
+                return "java";
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Détecte le langage via les plugins Maven.
+     */
+    private String detectLanguageFromPlugins() {
+        List<Plugin> plugins = project.getBuildPlugins();
+
+        for (Plugin plugin : plugins) {
+            String key = plugin.getGroupId() + ":" + plugin.getArtifactId();
+
+            // Plugins Scala
+            if (key.equals("net.alchim31.maven:scala-maven-plugin") ||
+                key.equals("org.scala-tools:maven-scala-plugin")) {
+                getLog().info("  ✓ Scala détecté via plugin: " + key);
+                return "scala";
+            }
+
+            // Plugin Gatling avec exécution Scala
+            if (key.equals("io.gatling:gatling-maven-plugin")) {
+                // Vérifier la configuration du plugin pour détecter le langage
+                // Par défaut, Gatling Maven Plugin utilise Scala
+                getLog().info("  ✓ Plugin Gatling détecté (Scala par défaut)");
+                return "scala";
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Détecte le langage via les répertoires sources.
+     */
+    private String detectLanguageFromSourceDirs() {
+        File scalaDir = new File(project.getBasedir(), "src/test/scala");
+        File javaDir = new File(project.getBasedir(), "src/test/java");
+
+        boolean hasScala = scalaDir.exists() && hasScalaFiles(scalaDir);
+        boolean hasJava = javaDir.exists() && hasJavaFiles(javaDir);
+
+        if (hasScala) {
+            getLog().info("  ✓ Scala détecté via src/test/scala");
+            return "scala";
+        }
+
+        if (hasJava) {
+            getLog().info("  ✓ Java détecté via src/test/java");
+            return "java";
+        }
+
+        return null;
+    }
+
+    /**
+     * Vérifie si un répertoire contient des fichiers .scala.
+     */
+    private boolean hasScalaFiles(File dir) {
+        if (!dir.isDirectory()) return false;
+
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".scala"));
+        if (files != null && files.length > 0) return true;
+
+        // Vérifier récursivement
+        File[] subdirs = dir.listFiles(File::isDirectory);
+        if (subdirs != null) {
+            for (File subdir : subdirs) {
+                if (hasScalaFiles(subdir)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Vérifie si un répertoire contient des fichiers .java.
+     */
+    private boolean hasJavaFiles(File dir) {
+        if (!dir.isDirectory()) return false;
+
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".java"));
+        if (files != null && files.length > 0) return true;
+
+        // Vérifier récursivement
+        File[] subdirs = dir.listFiles(File::isDirectory);
+        if (subdirs != null) {
+            for (File subdir : subdirs) {
+                if (hasJavaFiles(subdir)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Génère le helper dans le langage cible.
+     */
+    private void generateHelper(String targetLanguage, File outputDir, File endpointsDir) throws Exception {
+        if ("scala".equals(targetLanguage)) {
+            getLog().info("Génération du helper Scala...");
+            ScalaHelperGenerator scalaGenerator = new ScalaHelperGenerator();
+            scalaGenerator.generate(outputDir, endpointsDir);
+            getLog().info("  ✓ Fichier généré: GatlingFeeders.scala");
+        } else if ("java".equals(targetLanguage)) {
+            getLog().info("Génération du helper Java...");
+            JavaHelperGenerator javaGenerator = new JavaHelperGenerator();
+            javaGenerator.generate(outputDir, endpointsDir);
+            getLog().info("  ✓ Fichier généré: GatlingFeeders.java");
+        } else {
+            throw new MojoExecutionException("Langage non supporté: " + targetLanguage);
         }
     }
 }

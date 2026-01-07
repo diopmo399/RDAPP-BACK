@@ -45,13 +45,13 @@
                 </executions>
                 <configuration>
                     <!-- Auto-détection de origin/main ou origin/master -->
-                    <baseRef>origin/main</baseRef>
+                    <baseRef>main</baseRef>
 
                     <!-- Comparer avec HEAD (branche courante) -->
                     <targetRef>HEAD</targetRef>
 
-                    <!-- Chemin des migrations -->
-                    <migrationsPath>src/main/resources/db/migration</migrationsPath>
+                    <!-- Chemin des migrations (relatif à la racine du repository Git) -->
+                    <migrationsPath>flyway-drift-maven-plugin/example-project/src/main/resources/db/migration</migrationsPath>
 
                     <!-- Fail le build si drifts détectés -->
                     <failIfBehind>true</failIfBehind>
