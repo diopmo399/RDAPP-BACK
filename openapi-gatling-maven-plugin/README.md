@@ -12,7 +12,8 @@ Plugin Maven pour générer automatiquement des données de test Gatling (feeder
 - Résout les références $ref
 - Gère allOf, oneOf, anyOf
 - Respecte les contraintes : min/max, minLength/maxLength, enum, required
-- Génère un helper Scala optionnel pour faciliter l'utilisation des feeders
+- **✨ Détection automatique Scala/Java** : génère le helper approprié selon votre projet
+- Génère un helper Scala ou Java pour faciliter l'utilisation des feeders
 
 ## Installation
 
@@ -70,7 +71,8 @@ Ajoutez le plugin dans votre `pom.xml` :
 | `overwrite` | boolean | `true` | Écraser fichiers existants |
 | `jsonColumnName` | String | `body` | Nom de la colonne pour le JSON |
 | `addCorrelationColumns` | boolean | `true` | Ajouter colonnes corrélation |
-| `generateScalaHelper` | boolean | `true` | Générer helper Scala |
+| `generateScalaHelper` | boolean | `true` | Générer helper (Scala ou Java) |
+| `language` | String | auto-détecté | Langage du helper : `scala` ou `java` (auto-détection si non spécifié) |
 
 ### Exemple de configuration complète
 
@@ -91,6 +93,99 @@ Ajoutez le plugin dans votre `pom.xml` :
     </includePaths>
 </configuration>
 ```
+
+## 🎯 Détection automatique du langage (Scala/Java)
+
+Le plugin détecte automatiquement si votre projet utilise **Scala ou Java** pour Gatling et génère le helper approprié (`GatlingFeeders.scala` ou `GatlingFeeders.java`).
+
+### ✨ Comment fonctionne la détection ?
+
+Le plugin essaie 3 méthodes dans l'ordre :
+
+1. **Dépendances Maven** : Recherche `scala-library`, `gatling-javaapi`, etc.
+2. **Plugins Maven** : Vérifie la présence de `scala-maven-plugin`
+3. **Répertoires sources** : Cherche des fichiers `.scala` ou `.java` dans `src/test/`
+
+Si aucune détection n'aboutit, le plugin utilise **Scala par défaut** (rétrocompatibilité).
+
+### 📖 Configuration
+
+#### Détection automatique (recommandé)
+
+Aucune configuration nécessaire ! Le plugin détecte automatiquement :
+
+```xml
+<configuration>
+    <inputSpec>src/test/resources/openapi.yml</inputSpec>
+    <generateScalaHelper>true</generateScalaHelper>
+    <!-- Détection automatique -->
+</configuration>
+```
+
+**Sortie console** :
+```
+[INFO] → Détection automatique du langage...
+[INFO]   ✓ Java détecté via dépendance Gatling Java: gatling-javaapi
+[INFO] Langage cible détecté: java
+[INFO] Génération du helper Java...
+[INFO]   ✓ Fichier généré: GatlingFeeders.java
+```
+
+#### Configuration manuelle
+
+Pour forcer un langage spécifique :
+
+```xml
+<configuration>
+    <inputSpec>src/test/resources/openapi.yml</inputSpec>
+    <language>java</language>  <!-- Force Java -->
+</configuration>
+```
+
+En ligne de commande :
+```bash
+mvn generate-gatling-data -Dlanguage=java
+```
+
+### 📊 Différences entre Scala et Java
+
+| Aspect | Scala | Java |
+|--------|-------|------|
+| **Fichier généré** | `GatlingFeeders.scala` | `GatlingFeeders.java` |
+| **Structure** | Object Scala | Classe statique Java |
+| **Naming** | snake_case | camelCase |
+| **API Gatling** | `io.gatling.core` | `io.gatling.javaapi.core` |
+
+### Exemple de helper Java généré
+
+```java
+package helpers;
+
+import io.gatling.javaapi.core.*;
+import static io.gatling.javaapi.core.CoreDsl.*;
+
+public class GatlingFeeders {
+
+    public static FeederBuilder<String> getUsers() {
+        return csv("target/gatling-data/endpoints/get_users.csv").circular();
+    }
+
+    public static Body.WithString jsonBody() {
+        return StringBody(session -> session.getString("body"));
+    }
+}
+```
+
+**Utilisation dans un scénario Java** :
+```java
+import helpers.GatlingFeeders;
+
+ScenarioBuilder scn = scenario("User API Test")
+    .feed(GatlingFeeders.getUsers())
+    .exec(http("Get Users").get("/users"));
+```
+
+📚 **Documentation complète** : Consultez [LANGUAGE_DETECTION.md](LANGUAGE_DETECTION.md) pour plus de détails.
 
 ## Utilisation
 
@@ -119,7 +214,7 @@ target/gatling-data/
 │   ├── GET_users_request.csv
 │   ├── PUT_users_userId_request.csv
 │   └── POST_orders_request.csv
-└── GatlingFeeders.scala
+└── GatlingFeeders.scala  (ou GatlingFeeders.java selon détection)
 ```
 
 ### 3. Utiliser les feeders dans Gatling
@@ -271,19 +366,22 @@ mvn gatling:test
 ```
 openapi-gatling-maven-plugin/
 ├── src/main/java/com/gatling/openapi/plugin/
-│   ├── GenerateGatlingDataMojo.java       # Mojo principal
+│   ├── GenerateGatlingDataMojo.java       # Mojo principal + détection langage
 │   ├── OpenApiLoader.java                 # Chargement OpenAPI
 │   ├── RefResolver.java                   # Résolution $ref
 │   ├── SchemaExampleGenerator.java        # Génération données
 │   ├── EndpointDatasetGenerator.java      # Génération endpoints
 │   ├── CsvWriter.java                     # Écriture CSV
 │   ├── JsonWriter.java                    # Écriture JSON
-│   └── ScalaHelperGenerator.java          # Génération helper Scala
+│   ├── ScalaHelperGenerator.java          # Génération helper Scala
+│   └── JavaHelperGenerator.java           # Génération helper Java
 ├── src/test/
 │   ├── java/                              # Tests JUnit
 │   └── resources/
 │       └── test-openapi.yml               # OpenAPI de test
-└── example-usage/                         # Projet exemple
+├── example-usage/                         # Projet exemple
+├── README.md                              # Documentation principale
+└── LANGUAGE_DETECTION.md                  # Documentation détection langage
 ```
 
 ## Dépannage
@@ -309,6 +407,36 @@ mvn generate-test-resources -X
 Vérifiez que votre fichier OpenAPI est valide :
 - Utilisez https://editor.swagger.io/
 - Vérifiez la version OpenAPI (doit être 3.x)
+
+### Le mauvais langage est détecté
+
+**Symptôme** : Le plugin génère un helper Scala alors que vous utilisez Java (ou vice-versa).
+
+**Solution** : Forcer le langage explicitement :
+```xml
+<configuration>
+    <language>java</language>  <!-- ou scala -->
+</configuration>
+```
+
+Ou en ligne de commande :
+```bash
+mvn generate-gatling-data -Dlanguage=java
+```
+
+### Vérifier la détection du langage
+
+Lancez Maven en mode verbose pour voir les logs de détection :
+```bash
+mvn generate-gatling-data -X | grep "détecté"
+```
+
+**Sortie attendue** :
+```
+[INFO] → Détection automatique du langage...
+[INFO]   ✓ Java détecté via dépendance Gatling Java: gatling-javaapi
+[INFO] Langage cible détecté: java
+```
 
 ## Licence
 
