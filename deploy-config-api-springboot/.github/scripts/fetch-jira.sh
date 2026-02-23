@@ -53,7 +53,9 @@ fetch_all_sprint_issues() {
   local sprint_id="$1"
   local start_at=0
   local max_results=50
-  local all_issues="[]"
+  local temp_issues="/tmp/issues_${sprint_id}.json"
+
+  echo "[]" > "$temp_issues"
 
   while true; do
     local url="${AGILE_API}/sprint/${sprint_id}/issue?startAt=${start_at}&maxResults=${max_results}&fields=summary,status,issuetype,priority,assignee,creator,customfield_10016,fixVersions,components,created,updated,resolutiondate"
@@ -67,25 +69,26 @@ fetch_all_sprint_issues() {
 
     if [ "$count" -eq 0 ]; then break; fi
 
-    # Transformer les issues au format attendu par l'API
-    local transformed
-    transformed=$(echo "$issues" | jq '[.[] | {
+    # Transformer les issues au format attendu par l'API et ajouter au fichier
+    echo "$issues" | jq '[.[] | {
       key: .key,
       summary: .fields.summary,
       issueType: .fields.issuetype.name,
       statusName: .fields.status.name,
       statusCategory: .fields.status.statusCategory.key,
-      priority: .fields.priority.name,
+      priority: (.fields.priority.name // "None"),
       storyPoints: .fields.customfield_10016,
-      assigneeName: .fields.assignee.displayName,
-      assigneeUsername: .fields.assignee.name,
+      assigneeName: (.fields.assignee.displayName // null),
+      assigneeUsername: (.fields.assignee.name // null),
       fixVersion: ((.fields.fixVersions // []) | first | .name // null),
       created: .fields.created,
       updated: .fields.updated,
       resolutionDate: .fields.resolutiondate
-    }]')
+    }]' > "/tmp/issues_${sprint_id}_page.json"
 
-    all_issues=$(echo "$all_issues" "$transformed" | jq -s '.[0] + .[1]')
+    jq -s '.[0] + .[1]' "$temp_issues" "/tmp/issues_${sprint_id}_page.json" > "/tmp/issues_${sprint_id}_new.json"
+    mv "/tmp/issues_${sprint_id}_new.json" "$temp_issues"
+    rm -f "/tmp/issues_${sprint_id}_page.json"
 
     local total
     total=$(echo "$page" | jq '.total // 0')
@@ -93,7 +96,8 @@ fetch_all_sprint_issues() {
     if [ "$start_at" -ge "$total" ]; then break; fi
   done
 
-  echo "$all_issues"
+  cat "$temp_issues"
+  rm -f "$temp_issues"
 }
 
 # Récupère les versions d'un projet
@@ -119,7 +123,8 @@ echo "Jira base URL: ${JIRA_BASE_URL}"
 
 SQUADS=$(cat /tmp/squads.json)
 SQUAD_COUNT=$(echo "$SQUADS" | jq 'length')
-SQUAD_PAYLOADS="[]"
+SQUAD_PAYLOADS_FILE="/tmp/squad_payloads.json"
+echo "[]" > "$SQUAD_PAYLOADS_FILE"
 
 for i in $(seq 0 $((SQUAD_COUNT - 1))); do
   SQUAD=$(echo "$SQUADS" | jq ".[$i]")
@@ -145,23 +150,36 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
 
   # 2. Récupérer les sprints
   echo "  → Récupération des sprints..."
-  ALL_SPRINTS_RAW="[]"
+  SPRINTS_TEMP="/tmp/sprints_${BOARD_ID}.json"
+  echo "[]" > "$SPRINTS_TEMP"
   START_AT=0
   while true; do
     PAGE=$(jira_get "${AGILE_API}/board/${BOARD_ID}/sprint?startAt=${START_AT}&maxResults=50") || break
     VALUES=$(echo "$PAGE" | jq '.values // []')
     COUNT=$(echo "$VALUES" | jq 'length')
     [ "$COUNT" -eq 0 ] && break
-    ALL_SPRINTS_RAW=$(echo "$ALL_SPRINTS_RAW" "$VALUES" | jq -s '.[0] + .[1]')
+
+    echo "$VALUES" > "/tmp/sprints_${BOARD_ID}_page.json"
+    jq -s '.[0] + .[1]' "$SPRINTS_TEMP" "/tmp/sprints_${BOARD_ID}_page.json" > "/tmp/sprints_${BOARD_ID}_new.json"
+    mv "/tmp/sprints_${BOARD_ID}_new.json" "$SPRINTS_TEMP"
+    rm -f "/tmp/sprints_${BOARD_ID}_page.json"
+
     IS_LAST=$(echo "$PAGE" | jq '.isLast // true')
     [ "$IS_LAST" = "true" ] && break
     START_AT=$((START_AT + COUNT))
   done
 
-  ACTIVE_SPRINTS=$(echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "active")]')
-  CLOSED_SPRINTS=$(echo "$ALL_SPRINTS_RAW" | jq --argjson max "$MAX_CLOSED" \
-    '[.[] | select(.state == "closed")] | sort_by(.completeDate) | reverse | .[:$max]')
-  FUTURE_SPRINTS=$(echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "future")]')
+  ALL_SPRINTS_RAW=$(cat "$SPRINTS_TEMP")
+  rm -f "$SPRINTS_TEMP"
+
+  echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "active")]' > "/tmp/sprints_active_${BOARD_ID}.json"
+  echo "$ALL_SPRINTS_RAW" | jq --arg max "$MAX_CLOSED" \
+    '[.[] | select(.state == "closed")] | sort_by(.completeDate) | reverse | .[0:($max|tonumber)]' > "/tmp/sprints_closed_${BOARD_ID}.json"
+  echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "future")]' > "/tmp/sprints_future_${BOARD_ID}.json"
+
+  ACTIVE_SPRINTS=$(cat "/tmp/sprints_active_${BOARD_ID}.json")
+  CLOSED_SPRINTS=$(cat "/tmp/sprints_closed_${BOARD_ID}.json")
+  FUTURE_SPRINTS=$(cat "/tmp/sprints_future_${BOARD_ID}.json")
 
   ACTIVE_COUNT=$(echo "$ACTIVE_SPRINTS" | jq 'length')
   CLOSED_COUNT=$(echo "$CLOSED_SPRINTS" | jq 'length')
@@ -200,11 +218,17 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
   fi
 
   # Sprints fermés
-  CLOSED_PAYLOAD="[]"
+  CLOSED_TEMP="/tmp/closed_sprints_payload_${BOARD_ID}.json"
+  echo "[]" > "$CLOSED_TEMP"
   for j in $(seq 0 $((CLOSED_COUNT - 1))); do
     SPRINT_DATA=$(process_sprint "$(echo "$CLOSED_SPRINTS" | jq ".[$j]")")
-    CLOSED_PAYLOAD=$(echo "$CLOSED_PAYLOAD" | jq --argjson s "$SPRINT_DATA" '. + [$s]')
+    echo "$SPRINT_DATA" > "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
+    jq -s '.[0] + [.[1]]' "$CLOSED_TEMP" "/tmp/closed_sprint_${BOARD_ID}_${j}.json" > "/tmp/closed_new_${BOARD_ID}.json"
+    mv "/tmp/closed_new_${BOARD_ID}.json" "$CLOSED_TEMP"
+    rm -f "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
   done
+  CLOSED_PAYLOAD=$(cat "$CLOSED_TEMP")
+  rm -f "$CLOSED_TEMP"
 
   # Sprints futurs (pas d'issues)
   FUTURE_PAYLOAD=$(echo "$FUTURE_SPRINTS" | jq '[.[] | {
@@ -247,26 +271,53 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
       versions: $versions
     }')
 
-  SQUAD_PAYLOADS=$(echo "$SQUAD_PAYLOADS" | jq --argjson sp "$SQUAD_PAYLOAD" '. + [$sp]')
+  echo "$SQUAD_PAYLOAD" > "/tmp/squad_${SQUAD_ID}.json"
+  jq -s '.[0] + [.[1]]' "$SQUAD_PAYLOADS_FILE" "/tmp/squad_${SQUAD_ID}.json" > "/tmp/squad_payloads_new.json"
+  mv "/tmp/squad_payloads_new.json" "$SQUAD_PAYLOADS_FILE"
+  rm -f "/tmp/squad_${SQUAD_ID}.json"
 
-  echo "  ✓ Payload assemblé"
+  # Afficher la taille du payload pour monitoring
+  CURRENT_SIZE=$(wc -c < "$SQUAD_PAYLOADS_FILE" | tr -d ' ')
+  echo "  ✓ Payload assemblé (taille actuelle: $((CURRENT_SIZE / 1024)) KB)"
+
+  # Nettoyer les fichiers temporaires de sprints
+  rm -f "/tmp/sprints_active_${BOARD_ID}.json" "/tmp/sprints_closed_${BOARD_ID}.json" "/tmp/sprints_future_${BOARD_ID}.json"
 done
 
 # ── Écrire le payload bulk final ──
 
-BULK_PAYLOAD=$(jq -n \
+SQUAD_PAYLOADS=$(cat "$SQUAD_PAYLOADS_FILE")
+
+jq -n \
   --argjson squads "$SQUAD_PAYLOADS" \
-  --arg runId "${GITHUB_RUN_ID}" \
+  --arg runId "${GITHUB_RUN_ID:-unknown}" \
   --arg triggeredBy "${GITHUB_TRIGGERING_ACTOR:-schedule}" \
   '{
     squads: $squads,
     runId: $runId,
     triggeredBy: $triggeredBy
-  }')
+  }' > /tmp/bulk-payload.json
 
-echo "$BULK_PAYLOAD" > /tmp/bulk-payload.json
+TOTAL_SIZE=$(wc -c < /tmp/bulk-payload.json | tr -d ' ')
+TOTAL_SIZE_KB=$((TOTAL_SIZE / 1024))
+TOTAL_SIZE_MB=$((TOTAL_SIZE_KB / 1024))
 
-TOTAL_SIZE=$(wc -c < /tmp/bulk-payload.json)
 echo ""
-echo "═══ Payload prêt: $(echo "$SQUAD_PAYLOADS" | jq 'length') escouades, ${TOTAL_SIZE} bytes ═══"
+if [ "$TOTAL_SIZE_MB" -gt 0 ]; then
+  echo "═══ Payload prêt: $(cat "$SQUAD_PAYLOADS_FILE" | jq 'length') escouades, ${TOTAL_SIZE_MB} MB (${TOTAL_SIZE} bytes) ═══"
+else
+  echo "═══ Payload prêt: $(cat "$SQUAD_PAYLOADS_FILE" | jq 'length') escouades, ${TOTAL_SIZE_KB} KB (${TOTAL_SIZE} bytes) ═══"
+fi
+
+# Avertissement si le payload est très volumineux (> 10 MB)
+if [ "$TOTAL_SIZE_MB" -gt 10 ]; then
+  echo "⚠️  ATTENTION: Le payload est très volumineux (${TOTAL_SIZE_MB} MB). Considérez:"
+  echo "   - Réduire MAX_CLOSED_SPRINTS (actuellement: $MAX_CLOSED)"
+  echo "   - Limiter les champs récupérés dans les issues"
+  echo "   - Paginer les requêtes vers l'API"
+fi
+
+# Nettoyage final
+rm -f "$SQUAD_PAYLOADS_FILE"
+
 echo "::endgroup::"

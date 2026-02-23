@@ -40,6 +40,7 @@ public class JiraSyncService {
     private final SprintSyncRepository sprintRepo;
     private final SquadRepository squadRepo;
     private final AffectVersionRepository versionRepo;
+    private final com.rdapp.deploy.service.SprintCacheService sprintCacheService;
 
     // ══════════════════════════════════════════
     // Sync sprint complet pour une escouade
@@ -91,6 +92,10 @@ public class JiraSyncService {
         for (var future : futureSprints) {
             syncedFuture.add(persistSprint(future, List.of(), squad, board));
         }
+
+        // Invalider le cache après la synchronisation
+        log.info("Invalidating sprint cache after sync for squad: {}", squad.getName());
+        sprintCacheService.forceRefresh();
 
         return SprintSyncResult.builder()
                 .squadId(squadId)
@@ -182,6 +187,11 @@ public class JiraSyncService {
                 }
             }
         }
+
+        // Invalider le cache après la synchronisation
+        log.info("Invalidating sprint cache after sync");
+        sprintCacheService.forceRefresh();
+
         return results;
     }
 

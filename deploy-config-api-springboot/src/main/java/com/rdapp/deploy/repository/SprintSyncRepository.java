@@ -27,4 +27,7 @@ public interface SprintSyncRepository extends JpaRepository<SprintSync, Long> {
     List<SprintSync> findByBoardId(Long boardId);
 
     void deleteByJiraSprintId(Long jiraSprintId);
+
+    @Query("SELECT s FROM SprintSync s LEFT JOIN FETCH s.squad LEFT JOIN FETCH s.issues WHERE s.state = 'active' ORDER BY s.startDate DESC")
+    List<SprintSync> findAllActiveSprintsWithIssues();
 }
