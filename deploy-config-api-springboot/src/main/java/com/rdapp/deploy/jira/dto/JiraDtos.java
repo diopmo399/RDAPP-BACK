@@ -108,6 +108,7 @@ public final class JiraDtos {
         private Object sprint;
 
         private List<JiraVersion> fixVersions;
+        private List<JiraVersion> versions;  // Affect versions
         private List<JiraComponent> components;
 
         private String created;

@@ -51,6 +51,9 @@ public class SprintIssue {
     @Column(name = "fix_version", length = 50)
     private String fixVersion;
 
+    @Column(name = "affect_version", length = 50)
+    private String affectVersion;
+
     @Column(name = "created_at", length = 30)
     private String createdAt;
 

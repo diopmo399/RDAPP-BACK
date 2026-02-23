@@ -45,6 +45,14 @@ jira_get() {
     return 1
   fi
 
+  # Vérifier que la réponse est un JSON valide
+  if ! echo "$response" | jq empty 2>/dev/null; then
+    echo "  ✗ Invalid JSON response from: $url" >&2
+    echo "  Response: ${response:0:200}" >&2
+    echo "{}"
+    return 1
+  fi
+
   echo "$response"
 }
 
@@ -58,7 +66,7 @@ fetch_all_sprint_issues() {
   echo "[]" > "$temp_issues"
 
   while true; do
-    local url="${AGILE_API}/sprint/${sprint_id}/issue?startAt=${start_at}&maxResults=${max_results}&fields=summary,status,issuetype,priority,assignee,creator,customfield_10016,fixVersions,components,created,updated,resolutiondate"
+    local url="${AGILE_API}/sprint/${sprint_id}/issue?startAt=${start_at}&maxResults=${max_results}&fields=summary,status,issuetype,priority,assignee,creator,customfield_10016,fixVersions,versions,components,created,updated,resolutiondate"
     local page
     page=$(jira_get "$url") || break
 
@@ -71,19 +79,20 @@ fetch_all_sprint_issues() {
 
     # Transformer les issues au format attendu par l'API et ajouter au fichier
     echo "$issues" | jq '[.[] | {
-      key: .key,
-      summary: .fields.summary,
-      issueType: .fields.issuetype.name,
-      statusName: .fields.status.name,
-      statusCategory: .fields.status.statusCategory.key,
+      key: (.key // "UNKNOWN"),
+      summary: (.fields.summary // "No summary"),
+      issueType: (.fields.issuetype.name // "Unknown"),
+      statusName: (.fields.status.name // "Unknown"),
+      statusCategory: (.fields.status.statusCategory.key // "new"),
       priority: (.fields.priority.name // "None"),
-      storyPoints: .fields.customfield_10016,
+      storyPoints: (.fields.customfield_10016 // null),
       assigneeName: (.fields.assignee.displayName // null),
       assigneeUsername: (.fields.assignee.name // null),
       fixVersion: ((.fields.fixVersions // []) | first | .name // null),
-      created: .fields.created,
-      updated: .fields.updated,
-      resolutionDate: .fields.resolutiondate
+      affectVersion: ((.fields.versions // []) | first | .name // null),
+      created: (.fields.created // null),
+      updated: (.fields.updated // null),
+      resolutionDate: (.fields.resolutiondate // null)
     }]' > "/tmp/issues_${sprint_id}_page.json"
 
     jq -s '.[0] + .[1]' "$temp_issues" "/tmp/issues_${sprint_id}_page.json" > "/tmp/issues_${sprint_id}_new.json"
@@ -172,26 +181,47 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
   ALL_SPRINTS_RAW=$(cat "$SPRINTS_TEMP")
   rm -f "$SPRINTS_TEMP"
 
-  echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "active")]' > "/tmp/sprints_active_${BOARD_ID}.json"
-  echo "$ALL_SPRINTS_RAW" | jq --arg max "$MAX_CLOSED" \
-    '[.[] | select(.state == "closed")] | sort_by(.completeDate) | reverse | .[0:($max|tonumber)]' > "/tmp/sprints_closed_${BOARD_ID}.json"
-  echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "future")]' > "/tmp/sprints_future_${BOARD_ID}.json"
+  # Filtrer les sprints avec validation
+  if ! echo "$ALL_SPRINTS_RAW" | jq empty 2>/dev/null; then
+    echo "  ✗ Invalid sprints JSON data" >&2
+    ACTIVE_SPRINTS="[]"
+    CLOSED_SPRINTS="[]"
+    FUTURE_SPRINTS="[]"
+  else
+    echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "active")]' > "/tmp/sprints_active_${BOARD_ID}.json" 2>/dev/null || echo "[]" > "/tmp/sprints_active_${BOARD_ID}.json"
+    echo "$ALL_SPRINTS_RAW" | jq --arg max "$MAX_CLOSED" \
+      '[.[] | select(.state == "closed")] | sort_by(.completeDate) | reverse | .[0:($max|tonumber)]' > "/tmp/sprints_closed_${BOARD_ID}.json" 2>/dev/null || echo "[]" > "/tmp/sprints_closed_${BOARD_ID}.json"
+    echo "$ALL_SPRINTS_RAW" | jq '[.[] | select(.state == "future")]' > "/tmp/sprints_future_${BOARD_ID}.json" 2>/dev/null || echo "[]" > "/tmp/sprints_future_${BOARD_ID}.json"
+  fi
 
   ACTIVE_SPRINTS=$(cat "/tmp/sprints_active_${BOARD_ID}.json")
   CLOSED_SPRINTS=$(cat "/tmp/sprints_closed_${BOARD_ID}.json")
   FUTURE_SPRINTS=$(cat "/tmp/sprints_future_${BOARD_ID}.json")
 
-  ACTIVE_COUNT=$(echo "$ACTIVE_SPRINTS" | jq 'length')
-  CLOSED_COUNT=$(echo "$CLOSED_SPRINTS" | jq 'length')
-  FUTURE_COUNT=$(echo "$FUTURE_SPRINTS" | jq 'length')
+  ACTIVE_COUNT=$(echo "$ACTIVE_SPRINTS" | jq 'length' 2>/dev/null || echo "0")
+  CLOSED_COUNT=$(echo "$CLOSED_SPRINTS" | jq 'length' 2>/dev/null || echo "0")
+  FUTURE_COUNT=$(echo "$FUTURE_SPRINTS" | jq 'length' 2>/dev/null || echo "0")
+
+  # Valider que les counts sont des nombres
+  [[ "$ACTIVE_COUNT" =~ ^[0-9]+$ ]] || ACTIVE_COUNT=0
+  [[ "$CLOSED_COUNT" =~ ^[0-9]+$ ]] || CLOSED_COUNT=0
+  [[ "$FUTURE_COUNT" =~ ^[0-9]+$ ]] || FUTURE_COUNT=0
+
   echo "  ✓ Sprints: $ACTIVE_COUNT active, $CLOSED_COUNT closed, $FUTURE_COUNT future"
 
   # 3. Récupérer les issues pour chaque sprint
   process_sprint() {
     local sprint_json="$1"
-    local sprint_id=$(echo "$sprint_json" | jq '.id')
-    local sprint_name=$(echo "$sprint_json" | jq -r '.name')
-    local sprint_state=$(echo "$sprint_json" | jq -r '.state')
+    local sprint_id=$(echo "$sprint_json" | jq -r '.id // empty')
+    local sprint_name=$(echo "$sprint_json" | jq -r '.name // "Unknown"')
+    local sprint_state=$(echo "$sprint_json" | jq -r '.state // "unknown"')
+
+    # Vérifier que l'ID est valide
+    if [ -z "$sprint_id" ] || [ "$sprint_id" = "null" ]; then
+      echo "    ⚠ Sprint sans ID valide, skip"
+      echo '{"jiraSprintId": null, "name": "Invalid", "state": "unknown", "issues": []}'
+      return
+    fi
 
     echo "    → Sprint '$sprint_name' (id=$sprint_id, state=$sprint_state)..."
     local issues
@@ -203,7 +233,7 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
       jiraSprintId: .id,
       name: .name,
       state: .state,
-      goal: .goal,
+      goal: (.goal // ""),
       startDate: .startDate,
       endDate: .endDate,
       completeDate: .completeDate,
@@ -214,33 +244,37 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
   # Sprint actif
   ACTIVE_PAYLOAD="null"
   if [ "$ACTIVE_COUNT" -gt 0 ]; then
-    ACTIVE_PAYLOAD=$(process_sprint "$(echo "$ACTIVE_SPRINTS" | jq '.[0]')")
+    ACTIVE_PAYLOAD=$(process_sprint "$(echo "$ACTIVE_SPRINTS" | jq '.[0]')") || ACTIVE_PAYLOAD="null"
   fi
 
   # Sprints fermés
   CLOSED_TEMP="/tmp/closed_sprints_payload_${BOARD_ID}.json"
   echo "[]" > "$CLOSED_TEMP"
-  for j in $(seq 0 $((CLOSED_COUNT - 1))); do
-    SPRINT_DATA=$(process_sprint "$(echo "$CLOSED_SPRINTS" | jq ".[$j]")")
-    echo "$SPRINT_DATA" > "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
-    jq -s '.[0] + [.[1]]' "$CLOSED_TEMP" "/tmp/closed_sprint_${BOARD_ID}_${j}.json" > "/tmp/closed_new_${BOARD_ID}.json"
-    mv "/tmp/closed_new_${BOARD_ID}.json" "$CLOSED_TEMP"
-    rm -f "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
-  done
+  if [ "$CLOSED_COUNT" -gt 0 ]; then
+    for j in $(seq 0 $((CLOSED_COUNT - 1))); do
+      SPRINT_DATA=$(process_sprint "$(echo "$CLOSED_SPRINTS" | jq ".[$j]")") || continue
+      if [ -n "$SPRINT_DATA" ]; then
+        echo "$SPRINT_DATA" > "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
+        jq -s '.[0] + [.[1]]' "$CLOSED_TEMP" "/tmp/closed_sprint_${BOARD_ID}_${j}.json" > "/tmp/closed_new_${BOARD_ID}.json" 2>/dev/null || cp "$CLOSED_TEMP" "/tmp/closed_new_${BOARD_ID}.json"
+        mv "/tmp/closed_new_${BOARD_ID}.json" "$CLOSED_TEMP"
+        rm -f "/tmp/closed_sprint_${BOARD_ID}_${j}.json"
+      fi
+    done
+  fi
   CLOSED_PAYLOAD=$(cat "$CLOSED_TEMP")
   rm -f "$CLOSED_TEMP"
 
   # Sprints futurs (pas d'issues)
   FUTURE_PAYLOAD=$(echo "$FUTURE_SPRINTS" | jq '[.[] | {
     jiraSprintId: .id,
-    name: .name,
-    state: .state,
-    goal: .goal,
+    name: (.name // "Unknown"),
+    state: (.state // "future"),
+    goal: (.goal // ""),
     startDate: .startDate,
     endDate: .endDate,
     completeDate: .completeDate,
     issues: []
-  }]')
+  }]' 2>/dev/null || echo "[]")
 
   # 4. Versions du projet
   VERSIONS="[]"

@@ -277,6 +277,8 @@ public class JiraSyncService {
                     .assigneeUsername(fields.getAssignee() != null ? fields.getAssignee().getName() : null)
                     .fixVersion(fields.getFixVersions() != null && !fields.getFixVersions().isEmpty()
                             ? fields.getFixVersions().getFirst().getName() : null)
+                    .affectVersion(fields.getVersions() != null && !fields.getVersions().isEmpty()
+                            ? fields.getVersions().getFirst().getName() : null)
                     .createdAt(fields.getCreated())
                     .updatedAt(fields.getUpdated())
                     .resolutionDate(fields.getResolutiondate())

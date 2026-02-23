@@ -269,6 +269,9 @@ databaseChangeLog:
                   name: fix_version
                   type: VARCHAR(50)
               - column:
+                  name: affect_version
+                  type: VARCHAR(50)
+              - column:
                   name: created_at
                   type: VARCHAR(30)
               - column:
@@ -290,3 +293,6 @@ databaseChangeLog:
             columns:
               - column:
                   name: issue_key
+
+  - include:
+      file: db/changelog/007-add-affect-version-to-sprint-issue.yaml
