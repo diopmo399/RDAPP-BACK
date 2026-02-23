@@ -226,7 +226,14 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
     echo "    → Sprint '$sprint_name' (id=$sprint_id, state=$sprint_state)..."
     local issues
     issues=$(fetch_all_sprint_issues "$sprint_id")
-    local issue_count=$(echo "$issues" | jq 'length')
+
+    # Valider que issues est un JSON valide
+    if [ -z "$issues" ] || ! echo "$issues" | jq empty 2>/dev/null; then
+      echo "    ⚠ Issues JSON invalide, utilisation d'un tableau vide"
+      issues="[]"
+    fi
+
+    local issue_count=$(echo "$issues" | jq 'length' 2>/dev/null || echo "0")
     echo "      ✓ $issue_count issues"
 
     echo "$sprint_json" | jq --argjson issues "$issues" '{
@@ -281,7 +288,36 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
   if [ -n "$PROJECT_KEY" ] && [ "$PROJECT_KEY" != "" ]; then
     echo "  → Récupération des versions ($PROJECT_KEY)..."
     VERSIONS=$(fetch_project_versions "$PROJECT_KEY")
-    echo "  ✓ $(echo "$VERSIONS" | jq 'length') versions"
+    if [ -z "$VERSIONS" ] || ! echo "$VERSIONS" | jq empty 2>/dev/null; then
+      echo "  ⚠ Versions JSON invalide, utilisation d'un tableau vide"
+      VERSIONS="[]"
+    fi
+    echo "  ✓ $(echo "$VERSIONS" | jq 'length' 2>/dev/null || echo "0") versions"
+  fi
+
+  # Valider tous les payloads avant assemblage
+  [ -z "$ACTIVE_PAYLOAD" ] && ACTIVE_PAYLOAD="null"
+  [ -z "$CLOSED_PAYLOAD" ] && CLOSED_PAYLOAD="[]"
+  [ -z "$FUTURE_PAYLOAD" ] && FUTURE_PAYLOAD="[]"
+
+  # Valider que les payloads sont du JSON valide
+  if ! echo "$ACTIVE_PAYLOAD" | jq empty 2>/dev/null; then
+    echo "  ⚠ ACTIVE_PAYLOAD invalide, utilisation de null"
+    ACTIVE_PAYLOAD="null"
+  fi
+  if ! echo "$CLOSED_PAYLOAD" | jq empty 2>/dev/null; then
+    echo "  ⚠ CLOSED_PAYLOAD invalide, utilisation de []"
+    CLOSED_PAYLOAD="[]"
+  fi
+  if ! echo "$FUTURE_PAYLOAD" | jq empty 2>/dev/null; then
+    echo "  ⚠ FUTURE_PAYLOAD invalide, utilisation de []"
+    FUTURE_PAYLOAD="[]"
+  fi
+
+  # Valider BOARD_ID (doit être un nombre)
+  if ! [[ "$BOARD_ID" =~ ^[0-9]+$ ]]; then
+    echo "  ⚠ BOARD_ID invalide ($BOARD_ID), utilisation de null"
+    BOARD_ID="null"
   fi
 
   # 5. Assembler le payload escouade
@@ -303,7 +339,13 @@ for i in $(seq 0 $((SQUAD_COUNT - 1))); do
       closedSprints: $closed,
       futureSprints: $future,
       versions: $versions
-    }')
+    }' 2>/dev/null)
+
+  # Vérifier que l'assemblage a réussi
+  if [ -z "$SQUAD_PAYLOAD" ] || ! echo "$SQUAD_PAYLOAD" | jq empty 2>/dev/null; then
+    echo "  ✗ Échec de l'assemblage du payload, skip squad"
+    continue
+  fi
 
   echo "$SQUAD_PAYLOAD" > "/tmp/squad_${SQUAD_ID}.json"
   jq -s '.[0] + [.[1]]' "$SQUAD_PAYLOADS_FILE" "/tmp/squad_${SQUAD_ID}.json" > "/tmp/squad_payloads_new.json"
@@ -321,6 +363,12 @@ done
 # ── Écrire le payload bulk final ──
 
 SQUAD_PAYLOADS=$(cat "$SQUAD_PAYLOADS_FILE")
+
+# Valider que SQUAD_PAYLOADS est un JSON valide
+if [ -z "$SQUAD_PAYLOADS" ] || ! echo "$SQUAD_PAYLOADS" | jq empty 2>/dev/null; then
+  echo "⚠️  SQUAD_PAYLOADS invalide, utilisation d'un tableau vide"
+  SQUAD_PAYLOADS="[]"
+fi
 
 jq -n \
   --argjson squads "$SQUAD_PAYLOADS" \

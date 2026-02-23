@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - changeSet:
+      id: 7-add-affect-version-column
+      author: deploy-config
+      changes:
+        - addColumn:
+            tableName: sprint_issue
+            columns:
+              - column:
+                  name: affect_version
+                  type: VARCHAR(50)
+                  remarks: "Affect version from Jira - version where the bug/issue was found"
