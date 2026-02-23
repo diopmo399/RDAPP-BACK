@@ -1,0 +1,141 @@
+# ════════════════════════════════════════════════════════════
+# Jira DC → Deploy Config API — Batch Sync
+# ════════════════════════════════════════════════════════════
+#
+# Ce workflow :
+#   1. GET /api/v1/squads → récupère les escouades + boardId
+#   2. Pour chaque escouade avec boardId :
+#      a. Appelle Jira DC Agile API → sprints (active, closed, future)
+#      b. Appelle Jira DC Agile API → issues par sprint
+#      c. Appelle Jira DC REST API  → versions du projet
+#   3. POST /api/v1/batch/ingest/bulk → envoie tout au backend
+#
+# Secrets requis :
+#   JIRA_BASE_URL        ex: https://jira.rdapp.com
+#   JIRA_PAT_TOKEN       Personal Access Token Jira DC
+#   DEPLOY_API_URL       ex: https://deploy-api.rdapp.com/api/v1
+#   DEPLOY_API_TOKEN     Token d'auth pour ton API (si applicable)
+#
+name: Jira DC Sync
+
+on:
+  # ── Cron : toutes les 15 minutes (lun-ven, heures bureau) ──
+  schedule:
+    - cron: '*/15 8-18 * * 1-5'
+
+  # ── Déclenchement manuel ──
+  workflow_dispatch:
+    inputs:
+      squad_id:
+        description: 'ID escouade spécifique (vide = toutes)'
+        required: false
+        default: ''
+      max_closed_sprints:
+        description: 'Nombre de sprints fermés à récupérer'
+        required: false
+        default: '5'
+
+  # ── Webhook depuis ton API (optionnel) ──
+  repository_dispatch:
+    types: [jira-sync]
+
+env:
+  JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+  JIRA_PAT_TOKEN: ${{ secrets.JIRA_PAT_TOKEN }}
+  DEPLOY_API_URL: ${{ secrets.DEPLOY_API_URL }}
+  DEPLOY_API_TOKEN: ${{ secrets.DEPLOY_API_TOKEN }}
+  MAX_CLOSED_SPRINTS: ${{ github.event.inputs.max_closed_sprints || '5' }}
+  SQUAD_FILTER: ${{ github.event.inputs.squad_id || '' }}
+
+jobs:
+  sync:
+    name: Sync Jira → API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      # ─────────────────────────────────────────
+      # 1. Récupérer les escouades depuis ton API
+      # ─────────────────────────────────────────
+      - name: Fetch squads from API
+        id: squads
+        run: |
+          echo "::group::Fetching squads"
+          SQUADS=$(curl -sf \
+            -H "Authorization: Bearer ${DEPLOY_API_TOKEN}" \
+            -H "Accept: application/json" \
+            "${DEPLOY_API_URL}/squads")
+
+          if [ -z "$SQUADS" ] || [ "$SQUADS" = "[]" ]; then
+            echo "::warning::Aucune escouade trouvée"
+            echo "count=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Filtrer si squad_id spécifié
+          if [ -n "$SQUAD_FILTER" ]; then
+            SQUADS=$(echo "$SQUADS" | jq --arg id "$SQUAD_FILTER" '[.[] | select(.id == $id)]')
+          fi
+
+          # Ne garder que celles avec un boardId
+          SQUADS=$(echo "$SQUADS" | jq '[.[] | select(.boardId != null and .boardId != "")]')
+
+          COUNT=$(echo "$SQUADS" | jq length)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$SQUADS" > /tmp/squads.json
+          echo "Escouades avec boardId: $COUNT"
+          echo "$SQUADS" | jq '.[].name'
+          echo "::endgroup::"
+
+      # ─────────────────────────────────────────
+      # 2. Appeler Jira DC pour chaque escouade
+      # ─────────────────────────────────────────
+      - name: Fetch data from Jira DC
+        if: steps.squads.outputs.count != '0'
+        run: |
+          chmod +x .github/scripts/fetch-jira.sh
+          .github/scripts/fetch-jira.sh
+
+      # ─────────────────────────────────────────
+      # 3. POST les résultats vers ton API
+      # ─────────────────────────────────────────
+      - name: Push results to API
+        if: steps.squads.outputs.count != '0'
+        run: |
+          chmod +x .github/scripts/push-to-api.sh
+          .github/scripts/push-to-api.sh
+
+      # ─────────────────────────────────────────
+      # 4. Summary
+      # ─────────────────────────────────────────
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f /tmp/ingest-response.json ]; then
+            echo "## 🔄 Jira Sync Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Escouades | $(jq -r '.squadsProcessed // 0' /tmp/ingest-response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Sprints | $(jq -r '.totalSprintsSaved // 0' /tmp/ingest-response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Issues | $(jq -r '.totalIssuesSaved // 0' /tmp/ingest-response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Versions | $(jq -r '.totalVersionsSaved // 0' /tmp/ingest-response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Run ID | \`${GITHUB_RUN_ID}\` |" >> $GITHUB_STEP_SUMMARY
+
+            ERRORS=$(jq -r '.errors // [] | length' /tmp/ingest-response.json)
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### ⚠️ Erreurs ($ERRORS)" >> $GITHUB_STEP_SUMMARY
+              jq -r '.errors[]' /tmp/ingest-response.json | while read err; do
+                echo "- $err" >> $GITHUB_STEP_SUMMARY
+              done
+            fi
+          else
+            echo "## ⚠️ Aucun résultat (pas d'escouades avec boardId)" >> $GITHUB_STEP_SUMMARY
+          fi

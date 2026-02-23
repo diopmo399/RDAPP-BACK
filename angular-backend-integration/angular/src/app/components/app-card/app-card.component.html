@@ -1,0 +1,108 @@
+<div class="card" [class.expanded]="isExpanded"
+  [style.border-color]="isExpanded ? app.color + '44' : null">
+
+  <!-- En-tête (toujours visible) -->
+  <div class="hdr" (click)="toggleCard()">
+    <div class="hdr-left">
+      <span class="icon">{{ app.icon }}</span>
+      <div>
+        <div class="name" [style.color]="app.color">{{ app.name }}</div>
+        <div class="desc">{{ app.description }}</div>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <span *ngIf="notStartedTickets.length" class="badge"
+        [style.background]="palette.red + '12'" [style.color]="palette.red">
+        {{ notStartedTickets.length }} non déb.
+      </span>
+      <span *ngIf="inProgressTickets.length" class="badge"
+        [style.background]="palette.orange + '12'" [style.color]="palette.orange">
+        {{ inProgressTickets.length }} en cours
+      </span>
+      <span *ngIf="pullRequestTickets.length" class="badge"
+        [style.background]="palette.teal + '12'" [style.color]="palette.teal">
+        {{ pullRequestTickets.length }} PR
+      </span>
+      <span class="tech"
+        [style.background]="techMeta(app.tech).bg"
+        [style.color]="techMeta(app.tech).color"
+        [style.border-color]="techMeta(app.tech).border">
+        {{ techMeta(app.tech).label }}
+      </span>
+      <!-- Refresh button (API mode) -->
+      <button *ngIf="isApiMode && isExpanded" class="card-refresh-btn"
+        (click)="refreshApp($event)" title="Rafraîchir depuis l'API">↻</button>
+      <span class="chevron" [class.open]="isExpanded">▾</span>
+    </div>
+  </div>
+
+  <!-- Mode réduit : barre mini env -->
+  <div class="mini" *ngIf="!isExpanded">
+    <div class="mini-env" *ngFor="let ek of envKeys">
+      <span class="pulse">
+        <span class="pulse-ring" [style.background]="statusMeta(app.envs[ek].status).color"></span>
+        <span class="pulse-core" [style.background]="statusMeta(app.envs[ek].status).color"></span>
+      </span>
+      <span class="mini-label" [style.color]="envMeta(ek).color">{{ envMeta(ek).label }}</span>
+      <span class="mini-ver">v{{ app.envs[ek].version | truncate:11 }}</span>
+    </div>
+  </div>
+
+  <!-- Mode étendu : onglets + contenu -->
+  <div class="body" *ngIf="isExpanded">
+    <div class="tabs">
+      <div class="tab" [class.active]="activeTab === 'pipeline'"
+        [style.color]="activeTab === 'pipeline' ? app.color : null"
+        (click)="switchTab('pipeline', $event)">📦 Pipeline</div>
+      <div class="tab" [class.active]="activeTab === 'sprint'"
+        [style.color]="activeTab === 'sprint' ? app.color : null"
+        (click)="switchTab('sprint', $event)">
+        🏃 Sprint
+        <ng-container *ngIf="!isSprintLoading">
+          <span class="tab-n" [style.background]="palette.red + '12'" [style.color]="palette.red">{{ notStartedTickets.length }}</span>
+          <span class="tab-n" [style.background]="palette.orange + '12'" [style.color]="palette.orange">{{ inProgressTickets.length }}</span>
+          <span class="tab-n" [style.background]="palette.teal + '12'" [style.color]="palette.teal">{{ pullRequestTickets.length }}</span>
+        </ng-container>
+        <span *ngIf="isSprintLoading" class="tab-loading">⏳</span>
+      </div>
+    </div>
+
+    <app-pipeline *ngIf="activeTab === 'pipeline'" [app]="app"></app-pipeline>
+
+    <!-- Sprint tab -->
+    <ng-container *ngIf="activeTab === 'sprint'">
+      <!-- Sprint loading state -->
+      <div class="sprint-loading" *ngIf="isSprintLoading">
+        <div class="sprint-loader">
+          <div class="sprint-loader-bar"></div>
+        </div>
+        <p>Chargement des données sprint depuis Jira...</p>
+      </div>
+
+      <!-- Sprint grid -->
+      <div class="sprint-grid" *ngIf="!isSprintLoading">
+        <app-sprint-panel panelTitle="Non débutés" icon="🚫" mode="ns"
+          [accentColor]="palette.red"
+          [groups]="notStartedGroups"
+          [tickets]="notStartedTickets"
+          [appColor]="app.color"
+          [appRepo]="app.repo">
+        </app-sprint-panel>
+        <app-sprint-panel panelTitle="En cours" icon="🔨" mode="ip"
+          [accentColor]="palette.orange"
+          [groups]="inProgressGroups"
+          [tickets]="inProgressTickets"
+          [appColor]="app.color"
+          [appRepo]="app.repo">
+        </app-sprint-panel>
+        <app-sprint-panel panelTitle="En PR" icon="⎇" mode="pr"
+          [accentColor]="palette.teal"
+          [groups]="pullRequestGroups"
+          [tickets]="pullRequestTickets"
+          [appColor]="app.color"
+          [appRepo]="app.repo">
+        </app-sprint-panel>
+      </div>
+    </ng-container>
+  </div>
+</div>

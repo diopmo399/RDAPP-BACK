@@ -1,0 +1,74 @@
+<div class="panel">
+  <div class="panel-hdr">
+    <div class="panel-title" [style.color]="accentColor">{{ icon }} {{ panelTitle }}</div>
+    <span class="panel-count" [style.background]="accentColor + '12'" [style.color]="accentColor">
+      {{ tickets.length }} · {{ totalPoints }} pts
+    </span>
+  </div>
+
+  <div class="empty" *ngIf="groups.length === 0">Aucun ticket 🎉</div>
+
+  <div class="squad" *ngFor="let g of groups; trackBy: trackBySquadId">
+    <div class="squad-hdr">
+      <div class="squad-name">
+        <span class="squad-dot" [style.background]="g.squad.color"></span>
+        <span [style.color]="g.squad.color">{{ g.squad.name }}</span>
+      </div>
+      <span class="squad-count">{{ g.tickets.length }} · {{ svc.sumStoryPoints(g.tickets) }} pts</span>
+    </div>
+
+    <div class="ticket" *ngFor="let t of g.tickets; trackBy: trackByTicketId">
+      <a class="ticket-id" [href]="jiraUrl + '/' + t.ticket" target="_blank"
+         [style.color]="appColor" [style.border-color]="appColor + '33'">{{ t.ticket }}</a>
+
+      <div class="ticket-body">
+        <div class="ticket-name">{{ t.title }}</div>
+        <div class="meta">
+          <span class="sp">{{ t.storyPoints }} pts</span>
+          <span class="pri"
+            [style.background]="priorityMeta(t.priority).bg"
+            [style.color]="priorityMeta(t.priority).color">
+            {{ priorityMeta(t.priority).label }}
+          </span>
+          <span>{{ t.author }}</span>
+        </div>
+
+        <!-- En cours : barre de progression -->
+        <ng-container *ngIf="mode === 'ip'">
+          <div class="progress-row">
+            <div class="progress-track">
+              <div class="progress-fill"
+                [style.width.%]="asInProgress(t).progress"
+                [style.background]="svc.getProgressColor(asInProgress(t).progress)">
+              </div>
+            </div>
+            <span class="progress-pct" [style.color]="svc.getProgressColor(asInProgress(t).progress)">
+              {{ asInProgress(t).progress }}%
+            </span>
+          </div>
+          <div class="branch">⎇ {{ asInProgress(t).branch }}</div>
+        </ng-container>
+
+        <!-- En PR : checks CI + lien PR -->
+        <ng-container *ngIf="mode === 'pr'">
+          <div class="pr-row">
+            <a class="pr-badge"
+              [href]="githubUrl + '/' + appRepo + '/pull/' + asPullRequest(t).pr.replace('#', '')"
+              target="_blank"
+              [style.background]="svc.areAllChecksPassing(asPullRequest(t).checks) ? palette.green + '15' : palette.gold + '15'"
+              [style.color]="svc.areAllChecksPassing(asPullRequest(t).checks) ? palette.green : palette.gold">
+              ⎇ PR {{ asPullRequest(t).pr }}
+            </a>
+            <span class="pr-branch">{{ asPullRequest(t).branch }}</span>
+            <span *ngFor="let c of checksToArray(asPullRequest(t).checks)" class="check-dot"
+              [style.background]="c.pass ? palette.green : palette.red"
+              [title]="c.name + ': ' + (c.pass ? '✓' : '✕')">
+            </span>
+            <span class="pr-comments">💬 {{ asPullRequest(t).comments }}</span>
+            <span class="pr-created">{{ asPullRequest(t).created }}</span>
+          </div>
+        </ng-container>
+      </div>
+    </div>
+  </div>
+</div>

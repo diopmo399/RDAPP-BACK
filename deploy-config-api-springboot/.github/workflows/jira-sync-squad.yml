@@ -1,0 +1,195 @@
+# ════════════════════════════════════════════════════════════
+# Sync une seule escouade — déclenché par le bouton "Sync"
+# ════════════════════════════════════════════════════════════
+#
+# Trigger : repository_dispatch type=squad-sync
+#   payload: { squad_id: "bp", board_id: "BPMN-42" }
+#
+# Ou manuellement via workflow_dispatch.
+#
+name: Jira DC Sync — Single Squad
+
+on:
+  repository_dispatch:
+    types: [squad-sync]
+
+  workflow_dispatch:
+    inputs:
+      squad_id:
+        description: 'ID escouade'
+        required: true
+      board_id:
+        description: 'Board ID Jira'
+        required: true
+
+env:
+  JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+  JIRA_PAT_TOKEN: ${{ secrets.JIRA_PAT_TOKEN }}
+  DEPLOY_API_URL: ${{ secrets.DEPLOY_API_URL }}
+  DEPLOY_API_TOKEN: ${{ secrets.DEPLOY_API_TOKEN }}
+
+jobs:
+  sync-squad:
+    name: Sync ${{ github.event.inputs.squad_id || github.event.client_payload.squad_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set variables
+        id: vars
+        run: |
+          # Depuis workflow_dispatch ou repository_dispatch
+          if [ -n "${{ github.event.inputs.squad_id }}" ]; then
+            echo "squad_id=${{ github.event.inputs.squad_id }}" >> $GITHUB_OUTPUT
+            echo "board_id=${{ github.event.inputs.board_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "squad_id=${{ github.event.client_payload.squad_id }}" >> $GITHUB_OUTPUT
+            echo "board_id=${{ github.event.client_payload.board_id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch from Jira DC
+        id: jira
+        run: |
+          AGILE="${JIRA_BASE_URL}/rest/agile/1.0"
+          REST="${JIRA_BASE_URL}/rest/api/2"
+          SQUAD_ID="${{ steps.vars.outputs.squad_id }}"
+          BOARD_NAME="${{ steps.vars.outputs.board_id }}"
+
+          echo "Squad: $SQUAD_ID | Board: $BOARD_NAME"
+
+          # Trouver le board
+          BOARD=$(curl -sf -H "Authorization: Bearer ${JIRA_PAT_TOKEN}" \
+            "${AGILE}/board?name=${BOARD_NAME}&maxResults=5")
+          BOARD_ID=$(echo "$BOARD" | jq '.values[0].id')
+          PROJECT_KEY=$(echo "$BOARD" | jq -r '.values[0].location.projectKey // ""')
+          echo "Board ID: $BOARD_ID | Project: $PROJECT_KEY"
+
+          if [ "$BOARD_ID" = "null" ] || [ -z "$BOARD_ID" ]; then
+            echo "::error::Board non trouvé: $BOARD_NAME"
+            exit 1
+          fi
+
+          # Sprints
+          SPRINTS=$(curl -sf -H "Authorization: Bearer ${JIRA_PAT_TOKEN}" \
+            "${AGILE}/board/${BOARD_ID}/sprint?maxResults=50")
+
+          ACTIVE_ID=$(echo "$SPRINTS" | jq '[.values[] | select(.state=="active")][0].id // empty')
+          ACTIVE_RAW=$(echo "$SPRINTS" | jq '[.values[] | select(.state=="active")][0] // null')
+          CLOSED_RAW=$(echo "$SPRINTS" | jq '[.values[] | select(.state=="closed")] | sort_by(.completeDate) | reverse | .[:5]')
+
+          # Issues du sprint actif
+          ACTIVE_ISSUES="[]"
+          if [ -n "$ACTIVE_ID" ] && [ "$ACTIVE_ID" != "null" ]; then
+            echo "Sprint actif ID: $ACTIVE_ID"
+            ACTIVE_ISSUES=$(curl -sf -H "Authorization: Bearer ${JIRA_PAT_TOKEN}" \
+              "${AGILE}/sprint/${ACTIVE_ID}/issue?maxResults=100&fields=summary,status,issuetype,priority,assignee,customfield_10016,fixVersions,created,updated,resolutiondate" \
+              | jq '[.issues[] | {
+                key, summary: .fields.summary, issueType: .fields.issuetype.name,
+                statusName: .fields.status.name, statusCategory: .fields.status.statusCategory.key,
+                priority: .fields.priority.name, storyPoints: .fields.customfield_10016,
+                assigneeName: .fields.assignee.displayName, assigneeUsername: .fields.assignee.name,
+                fixVersion: ((.fields.fixVersions // []) | first | .name // null),
+                created: .fields.created, updated: .fields.updated, resolutionDate: .fields.resolutiondate
+              }]')
+            echo "Issues sprint actif: $(echo "$ACTIVE_ISSUES" | jq 'length')"
+          fi
+
+          # Issues sprints fermés
+          CLOSED_PAYLOADS="[]"
+          for row in $(echo "$CLOSED_RAW" | jq -r '.[] | @base64'); do
+            SPRINT=$(echo "$row" | base64 -d)
+            SID=$(echo "$SPRINT" | jq '.id')
+            SNAME=$(echo "$SPRINT" | jq -r '.name')
+            echo "Sprint fermé: $SNAME (id=$SID)"
+
+            ISSUES=$(curl -sf -H "Authorization: Bearer ${JIRA_PAT_TOKEN}" \
+              "${AGILE}/sprint/${SID}/issue?maxResults=100&fields=summary,status,issuetype,priority,assignee,customfield_10016,fixVersions,created,updated,resolutiondate" \
+              | jq '[.issues[] | {
+                key, summary: .fields.summary, issueType: .fields.issuetype.name,
+                statusName: .fields.status.name, statusCategory: .fields.status.statusCategory.key,
+                priority: .fields.priority.name, storyPoints: .fields.customfield_10016,
+                assigneeName: .fields.assignee.displayName, assigneeUsername: .fields.assignee.name,
+                fixVersion: ((.fields.fixVersions // []) | first | .name // null),
+                created: .fields.created, updated: .fields.updated, resolutionDate: .fields.resolutiondate
+              }]')
+
+            ENTRY=$(echo "$SPRINT" | jq --argjson issues "$ISSUES" '{
+              jiraSprintId: .id, name: .name, state: .state, goal: .goal,
+              startDate: .startDate, endDate: .endDate, completeDate: .completeDate,
+              issues: $issues
+            }')
+            CLOSED_PAYLOADS=$(echo "$CLOSED_PAYLOADS" | jq --argjson e "$ENTRY" '. + [$e]')
+          done
+
+          # Versions
+          VERSIONS="[]"
+          if [ -n "$PROJECT_KEY" ]; then
+            VERSIONS=$(curl -sf -H "Authorization: Bearer ${JIRA_PAT_TOKEN}" \
+              "${REST}/project/${PROJECT_KEY}/versions" \
+              | jq '[.[] | {jiraId: .id, name: .name, description: .description, released: .released, archived: .archived, releaseDate: .releaseDate}]')
+            echo "Versions: $(echo "$VERSIONS" | jq 'length')"
+          fi
+
+          # Build active sprint payload
+          ACTIVE_PAYLOAD="null"
+          if [ "$ACTIVE_RAW" != "null" ] && [ -n "$ACTIVE_RAW" ]; then
+            ACTIVE_PAYLOAD=$(echo "$ACTIVE_RAW" | jq --argjson issues "$ACTIVE_ISSUES" '{
+              jiraSprintId: .id, name: .name, state: .state, goal: .goal,
+              startDate: .startDate, endDate: .endDate, completeDate: .completeDate,
+              issues: $issues
+            }')
+          fi
+
+          # Payload final
+          jq -n \
+            --arg sid "$SQUAD_ID" \
+            --argjson bid "$BOARD_ID" \
+            --arg bname "$BOARD_NAME" \
+            --arg pkey "$PROJECT_KEY" \
+            --argjson active "$ACTIVE_PAYLOAD" \
+            --argjson closed "$CLOSED_PAYLOADS" \
+            --argjson versions "$VERSIONS" \
+            --arg runId "${GITHUB_RUN_ID}" \
+            --arg actor "${GITHUB_TRIGGERING_ACTOR:-dispatch}" \
+            '{
+              squads: [{
+                squadId: $sid, boardId: $bid, boardName: $bname, projectKey: $pkey,
+                activeSprint: $active, closedSprints: $closed, futureSprints: [], versions: $versions
+              }],
+              runId: $runId,
+              triggeredBy: $actor
+            }' > /tmp/bulk-payload.json
+
+          echo "Payload: $(wc -c < /tmp/bulk-payload.json) bytes"
+
+      - name: Push to API
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${DEPLOY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/bulk-payload.json \
+            "${DEPLOY_API_URL}/batch/ingest/bulk")
+
+          echo "HTTP $HTTP_CODE"
+          jq '.' /tmp/response.json
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Ingest failed (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🔄 Squad Sync: ${{ steps.vars.outputs.squad_id }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/response.json ]; then
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Sprints | $(jq '.totalSprintsSaved // 0' /tmp/response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Issues | $(jq '.totalIssuesSaved // 0' /tmp/response.json) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Versions | $(jq '.totalVersionsSaved // 0' /tmp/response.json) |" >> $GITHUB_STEP_SUMMARY
+          fi

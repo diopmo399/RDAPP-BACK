@@ -1,0 +1,87 @@
+databaseChangeLog:
+
+  # ═══════════════════════════════════════════
+  # Table: application
+  # ═══════════════════════════════════════════
+  - changeSet:
+      id: 003-create-application
+      author: deploy-dashboard
+      changes:
+        - createTable:
+            tableName: application
+            columns:
+              - column: { name: id, type: varchar(80), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: icon, type: varchar(10) }
+              - column: { name: description, type: varchar(255) }
+              - column: { name: repo, type: varchar(120) }
+              - column: { name: tech, type: varchar(30), constraints: { nullable: false } }
+              - column: { name: color, type: varchar(20) }
+              - column: { name: sort_order, type: int }
+
+  # ═══════════════════════════════════════════
+  # Table: environment_deployment
+  # ═══════════════════════════════════════════
+  - changeSet:
+      id: 004-create-environment-deployment
+      author: deploy-dashboard
+      changes:
+        - createTable:
+            tableName: environment_deployment
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: application_id, type: varchar(80), constraints: { nullable: false } }
+              - column: { name: env_key, type: varchar(10), constraints: { nullable: false } }
+              - column: { name: version, type: varchar(50) }
+              - column: { name: status, type: varchar(20) }
+              - column: { name: last_deploy, type: varchar(60) }
+              - column: { name: branch, type: varchar(120) }
+              - column: { name: instances, type: int }
+              - column: { name: uptime, type: varchar(30) }
+              - column: { name: deployed_at, type: timestamp }
+        - addForeignKeyConstraint:
+            baseTableName: environment_deployment
+            baseColumnNames: application_id
+            referencedTableName: application
+            referencedColumnNames: id
+            constraintName: fk_env_deploy_app
+            onDelete: CASCADE
+        - addUniqueConstraint:
+            tableName: environment_deployment
+            columnNames: application_id, env_key
+            constraintName: uq_env_deploy_app_env
+
+  # ═══════════════════════════════════════════
+  # Table: commit_record
+  # ═══════════════════════════════════════════
+  - changeSet:
+      id: 005-create-commit-record
+      author: deploy-dashboard
+      changes:
+        - createTable:
+            tableName: commit_record
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: application_id, type: varchar(80), constraints: { nullable: false } }
+              - column: { name: version_tag, type: varchar(50), constraints: { nullable: false } }
+              - column: { name: sha, type: varchar(12), constraints: { nullable: false } }
+              - column: { name: message, type: varchar(500), constraints: { nullable: false } }
+              - column: { name: ticket, type: varchar(30) }
+              - column: { name: ticket_title, type: varchar(200) }
+              - column: { name: commit_type, type: varchar(20) }
+              - column: { name: author, type: varchar(80) }
+              - column: { name: commit_date, type: varchar(60) }
+              - column: { name: committed_at, type: timestamp }
+        - addForeignKeyConstraint:
+            baseTableName: commit_record
+            baseColumnNames: application_id
+            referencedTableName: application
+            referencedColumnNames: id
+            constraintName: fk_commit_app
+            onDelete: CASCADE
+        - createIndex:
+            tableName: commit_record
+            indexName: idx_commit_app_version
+            columns:
+              - column: { name: application_id }
+              - column: { name: version_tag }

@@ -1,0 +1,91 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: deploy-config-api
+
+  # ── H2 (dev) — remplacer par PostgreSQL en prod ──
+  datasource:
+    url: jdbc:h2:mem:deployconfig;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.H2Dialect
+
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+
+# ── Jira Data Center ──
+jira:
+  base-url: ${JIRA_BASE_URL:https://jira.servers.com}
+  # Authentification — PAT (Personal Access Token) recommandé
+  auth-type: pat
+  pat-token: ${JIRA_PAT_TOKEN:}
+  # Fallback Basic Auth (déprécié)
+  username: ${JIRA_USERNAME:}
+  password: ${JIRA_PASSWORD:}
+  # Timeouts
+  connect-timeout-ms: 5000
+  read-timeout-ms: 15000
+  # Retry
+  max-retries: 3
+  retry-delay-ms: 1000
+  # Cache TTL en minutes
+  cache-ttl-minutes: 5
+
+# ── Cache ──
+spring.cache:
+  type: caffeine
+  caffeine:
+    spec: maximumSize=200,expireAfterWrite=5m
+
+# ── GitHub Actions Dispatch ──
+github:
+  token: ${GITHUB_TOKEN:}
+  owner: ${GITHUB_OWNER:rdapp}
+  repo: ${GITHUB_REPO:deploy-config}
+
+# ── Profil PostgreSQL (prod) ──
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/deploy_config
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:deploy}
+    password: ${DB_PASSWORD:deploy}
+
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  h2:
+    console:
+      enabled: false
+
+# ── CORS ──
+---
+cors:
+  allowed-origins: http://localhost:4200
+  allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+  allowed-headers: "*"

@@ -1,0 +1,347 @@
+<!-- ═══ Loading ═══ -->
+<div class="loading-bar" *ngIf="loading">
+  <div class="loading-fill"></div>
+  <span class="loading-text">Chargement de la configuration...</span>
+</div>
+
+<div class="error-bar" *ngIf="svc.configError">
+  ⚠️ {{ svc.configError }}
+  <button class="retry-btn" (click)="ngOnInit()">Réessayer</button>
+</div>
+
+<!-- ═══ GHA Global Banner ═══ -->
+<div class="gha-banner" *ngIf="anyGhaPending">
+  <div class="gha-pulse-dot"></div>
+  <span>GitHub Actions en cours — synchronisation Jira DC...</span>
+</div>
+
+<!-- ═══ Jira DC Status ═══ -->
+<section class="section" *ngIf="jiraStatus">
+  <div class="section-header clickable" (click)="showJiraStatus = !showJiraStatus">
+    <span class="section-icon">🔗</span>
+    <h3>Jira Data Center</h3>
+    <span class="jira-badge" [class.connected]="jiraStatus.connected" [class.disconnected]="!jiraStatus.connected">
+      {{ jiraStatus.connected ? '● Connecté' : '○ Déconnecté' }}
+    </span>
+    <span class="chevron" [class.open]="showJiraStatus">▸</span>
+  </div>
+
+  <div class="collapse-body" *ngIf="showJiraStatus">
+    <div class="jira-info-grid">
+      <div class="jira-info-item">
+        <span class="jira-label">URL</span>
+        <span class="jira-value mono">{{ jiraStatus.baseUrl }}</span>
+      </div>
+      <div class="jira-info-item">
+        <span class="jira-label">Auth</span>
+        <span class="jira-value">{{ jiraStatus.authType === 'pat' ? 'Personal Access Token' : 'Basic Auth' }}</span>
+      </div>
+      <div class="jira-info-item" *ngIf="jiraStatus.error">
+        <span class="jira-label">Erreur</span>
+        <span class="jira-value error-text">{{ jiraStatus.error }}</span>
+      </div>
+    </div>
+    <div class="jira-actions">
+      <button class="sync-all-btn" [disabled]="syncingAll" (click)="syncAllSquads()">
+        {{ syncingAll ? '⏳ Synchronisation...' : '↻ Sync toutes les escouades' }}
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Affect Versions ═══ -->
+<section class="section">
+  <div class="section-header clickable" (click)="showVersions = !showVersions">
+    <span class="section-icon">🏷️</span>
+    <h3>Affect Versions</h3>
+    <span class="badge-count">{{ allVersions.length }}</span>
+    <span class="chevron" [class.open]="showVersions">▸</span>
+  </div>
+
+  <div class="collapse-body" *ngIf="showVersions">
+    <div class="ver-item" [class.past]="isPastVersion(v)" *ngFor="let v of verSlice">
+      <span class="ver-tag" [style.background]="VS[v.status].bg" [style.color]="VS[v.status].color">
+        {{ VS[v.status].icon }} {{ v.name }}
+      </span>
+      <span class="ver-jira-sync" *ngIf="v.id.startsWith('jira-')">⚡ Jira</span>
+      <span class="ver-desc" *ngIf="v.description">{{ v.description }}</span>
+      <div class="ver-controls">
+        <select class="ver-status-sel" [ngModel]="v.status" (ngModelChange)="updateVersionStatus(v, $event)">
+          <option *ngFor="let e of statusEntries()" [value]="e[0]">{{ e[1].label }}</option>
+        </select>
+        <input *ngIf="!isPastVersion(v)" type="date" class="ver-date-input" [ngModel]="v.releaseDate" (ngModelChange)="updateVersionDate(v, $event)">
+        <span *ngIf="isPastVersion(v)" class="ver-released-date">{{ v.releaseDate }}</span>
+        <button class="sm-btn remove" (click)="removeVersion(v.id)">✕</button>
+      </div>
+    </div>
+    <div class="pagination" *ngIf="verTotalPages > 1">
+      <button class="page-btn" [disabled]="verPage <= 1" (click)="verPage = verPage - 1">‹</button>
+      <button class="page-btn" *ngFor="let p of verPages" [class.active]="p === verPage" (click)="verPage = p">{{ p }}</button>
+      <button class="page-btn" [disabled]="verPage >= verTotalPages" (click)="verPage = verPage + 1">›</button>
+      <span class="page-info">{{ allVersions.length }} versions</span>
+    </div>
+    <div class="ver-add">
+      <div class="ver-add-row">
+        <input class="ver-name-input" placeholder="Nom version (ex: 24.06)" [(ngModel)]="newVerName" (keyup.enter)="addVersion()">
+        <select class="ver-status-sel" [(ngModel)]="newVerStatus">
+          <option value="planned">Planifiée</option>
+          <option value="in_progress">En cours</option>
+          <option value="released">Livrée</option>
+        </select>
+      </div>
+      <div class="ver-add-row">
+        <input class="ver-desc-input" placeholder="Description..." [(ngModel)]="newVerDesc">
+        <input type="date" class="ver-date-input" [(ngModel)]="newVerDate">
+        <button class="add-btn" [disabled]="isSaving('new-ver')" (click)="addVersion()">
+          {{ isSaving('new-ver') ? '⏳' : '+ Ajouter' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Escouades ═══ -->
+<section class="section">
+  <div class="section-header clickable" (click)="showSquads = !showSquads">
+    <span class="section-icon">👥</span>
+    <h3>Escouades</h3>
+    <span class="badge-count">{{ svc.squadConfigs.length }} escouades · {{ totalMembers }} membres</span>
+    <span class="chevron" [class.open]="showSquads">▸</span>
+  </div>
+
+  <div class="collapse-body" *ngIf="showSquads">
+    <div class="squad-block" *ngFor="let sq of svc.squadConfigs">
+
+      <!-- Squad header -->
+      <div class="squad-item" (click)="toggleSquad(sq.id)">
+        <span class="squad-dot" [style.background]="sq.color"></span>
+        <span class="squad-name">{{ sq.name }}</span>
+        <span class="board-id-tag" *ngIf="sq.boardId">{{ sq.boardId }}</span>
+        <!-- GHA pending indicator on collapsed -->
+        <span class="gha-mini-badge" *ngIf="isGhaPending(sq.id) && expandedSquad !== sq.id">
+          <span class="gha-mini-dot"></span> sync
+        </span>
+        <!-- Sprint mini-stats on collapsed -->
+        <ng-container *ngIf="getActiveSprint(sq.id) as sp">
+          <span class="sprint-mini" *ngIf="expandedSquad !== sq.id">
+            {{ sp.doneIssues }}/{{ sp.totalIssues }}
+            <span class="mini-bar">
+              <span class="mini-fill" [style.width.%]="donePercent(sp)"></span>
+            </span>
+          </span>
+        </ng-container>
+        <span class="member-count">{{ sq.members.length }} 👤</span>
+        <span class="squad-chevron" [class.open]="expandedSquad === sq.id">▸</span>
+        <div class="squad-actions" (click)="$event.stopPropagation()">
+          <button class="sm-btn remove" (click)="removeSquad(sq.id)">✕</button>
+        </div>
+      </div>
+
+      <!-- ═══ Expanded panel ═══ -->
+      <div class="members-panel" *ngIf="expandedSquad === sq.id">
+
+        <!-- Board ID + Sync -->
+        <div class="board-id-row">
+          <span class="board-id-label">Board ID</span>
+          <input class="board-id-input" [ngModel]="sq.boardId" (ngModelChange)="onBoardIdChange(sq.id, $event)" placeholder="Ex: BPMN-42">
+          <button class="sync-btn"
+            [class.syncing]="getSyncState(sq.id) === 'syncing'"
+            [class.gha-pending]="getSyncState(sq.id) === 'gha-pending'"
+            [class.synced]="getSyncState(sq.id) === 'synced'"
+            [class.error]="getSyncState(sq.id) === 'error'"
+            [disabled]="getSyncState(sq.id) === 'syncing' || getSyncState(sq.id) === 'gha-pending' || !sq.boardId"
+            (click)="syncBoard(sq.id)">
+            <ng-container [ngSwitch]="getSyncState(sq.id)">
+              <span *ngSwitchCase="'syncing'">⏳ Sync...</span>
+              <span *ngSwitchCase="'gha-pending'"><span class="gha-spinner"></span> GHA en cours</span>
+              <span *ngSwitchCase="'synced'">✓ Synchronisé</span>
+              <span *ngSwitchCase="'error'">✗ Erreur</span>
+              <span *ngSwitchDefault>↻ Sync Jira</span>
+            </ng-container>
+          </button>
+          <button class="refresh-btn" *ngIf="getActiveSprint(sq.id) || isGhaPending(sq.id)"
+            [disabled]="isSprintLoading(sq.id)"
+            (click)="refreshSprintData(sq.id); $event.stopPropagation()">
+            🔄
+          </button>
+        </div>
+
+        <!-- Sync message -->
+        <div class="sync-message" *ngIf="syncMessage[sq.id]"
+          [class.success]="getSyncState(sq.id) === 'synced'"
+          [class.gha]="getSyncState(sq.id) === 'gha-pending'"
+          [class.err]="getSyncState(sq.id) === 'error'">
+          {{ syncMessage[sq.id] }}
+          <span class="poll-counter" *ngIf="isGhaPending(sq.id)">
+            polling {{ getPollingCount(sq.id) }}/{{ GHA_MAX_POLLS }}
+          </span>
+        </div>
+
+        <!-- ═══ Sprint Jira Actif ═══ -->
+        <div class="sprint-section" *ngIf="sq.boardId">
+          <div class="sprint-section-title">
+            <span>🏃 Sprint actif</span>
+            <span class="sprint-loading" *ngIf="isSprintLoading(sq.id)">chargement...</span>
+          </div>
+
+          <ng-container *ngIf="getActiveSprint(sq.id) as sprint">
+            <div class="sprint-card active" [class.gha-updating]="isGhaPending(sq.id)">
+              <div class="sprint-header-row">
+                <span class="sprint-name">{{ sprint.name }}</span>
+                <span class="sprint-state active">ACTIVE</span>
+                <span class="sprint-project" *ngIf="sprint.projectKey">{{ sprint.projectKey }}</span>
+              </div>
+              <div class="sprint-goal" *ngIf="sprint.goal">{{ sprint.goal }}</div>
+              <div class="sprint-dates">
+                {{ formatDate(sprint.startDate) }}
+                <span class="date-sep">→</span>
+                {{ formatDate(sprint.endDate) }}
+              </div>
+
+              <!-- Progress -->
+              <div class="sprint-progress">
+                <div class="progress-row">
+                  <span class="progress-label">Issues</span>
+                  <div class="progress-bar">
+                    <div class="progress-fill"
+                      [style.width.%]="donePercent(sprint)"
+                      [style.background]="donePercent(sprint) > 70 ? '#16A34A' : donePercent(sprint) > 40 ? '#D97706' : '#2563EB'">
+                    </div>
+                  </div>
+                  <span class="progress-nums">{{ sprint.doneIssues }}/{{ sprint.totalIssues }}</span>
+                </div>
+                <div class="progress-row" *ngIf="sprint.totalStoryPoints > 0">
+                  <span class="progress-label">SP</span>
+                  <div class="progress-bar">
+                    <div class="progress-fill"
+                      [style.width.%]="spPercent(sprint)"
+                      [style.background]="spPercent(sprint) > 70 ? '#16A34A' : spPercent(sprint) > 40 ? '#D97706' : '#2563EB'">
+                    </div>
+                  </div>
+                  <span class="progress-nums">{{ sprint.doneStoryPoints | number:'1.0-0' }}/{{ sprint.totalStoryPoints | number:'1.0-0' }}</span>
+                </div>
+                <span class="pct-big">{{ donePercent(sprint) | number:'1.0-0' }}%</span>
+              </div>
+
+              <!-- Issues toggle -->
+              <button class="issues-toggle" (click)="showSprintIssues[sprint.jiraSprintId] = !showSprintIssues[sprint.jiraSprintId]">
+                {{ showSprintIssues[sprint.jiraSprintId] ? '▾ Masquer' : '▸ Voir' }} les {{ sprint.issues.length }} issues
+              </button>
+
+              <div class="issues-list" *ngIf="showSprintIssues[sprint.jiraSprintId]">
+                <div class="issue-row" *ngFor="let issue of sprint.issues">
+                  <a class="issue-key" [href]="issueUrl(issue.issueKey)" target="_blank" (click)="$event.stopPropagation()">{{ issue.issueKey }}</a>
+                  <span class="issue-type" [class.bug]="issue.issueType === 'Bug'" [class.story]="issue.issueType === 'Story'">{{ issue.issueType }}</span>
+                  <span class="issue-summary">{{ issue.summary }}</span>
+                  <span class="issue-status"
+                    [style.background]="issueStatusColor(issue.statusCategory).bg"
+                    [style.color]="issueStatusColor(issue.statusCategory).color">
+                    {{ issue.statusName }}
+                  </span>
+                  <span class="issue-priority">{{ priorityIcon(issue.priority) }}</span>
+                  <span class="issue-sp" *ngIf="issue.storyPoints">{{ issue.storyPoints }} SP</span>
+                  <span class="issue-assignee">{{ issue.assigneeName || '—' }}</span>
+                </div>
+              </div>
+
+              <div class="sprint-synced" *ngIf="sprint.syncedAt">
+                Dernière sync : {{ timeAgo(sprint.syncedAt) }}
+              </div>
+            </div>
+          </ng-container>
+
+          <div class="no-sprint" *ngIf="!getActiveSprint(sq.id) && !isSprintLoading(sq.id)">
+            Aucun sprint actif — cliquez ↻ Sync Jira pour charger
+          </div>
+
+          <!-- Sprints fermés -->
+          <ng-container *ngIf="getClosedSprints(sq.id).length > 0">
+            <button class="closed-toggle" (click)="showClosedSprints[sq.id] = !showClosedSprints[sq.id]">
+              {{ showClosedSprints[sq.id] ? '▾' : '▸' }} {{ getClosedSprints(sq.id).length }} sprint(s) fermé(s)
+            </button>
+
+            <div *ngIf="showClosedSprints[sq.id]">
+              <div class="sprint-card closed" *ngFor="let cs of getClosedSprints(sq.id)">
+                <div class="sprint-header-row">
+                  <span class="sprint-name">{{ cs.name }}</span>
+                  <span class="sprint-state closed">CLOSED</span>
+                </div>
+                <div class="sprint-dates">{{ formatDate(cs.startDate) }} → {{ formatDate(cs.completeDate) }}</div>
+                <div class="sprint-progress">
+                  <div class="progress-row">
+                    <div class="progress-bar sm">
+                      <div class="progress-fill" [style.width.%]="donePercent(cs)" style="background:#16A34A"></div>
+                    </div>
+                    <span class="progress-nums">{{ cs.doneIssues }}/{{ cs.totalIssues }} · {{ cs.doneStoryPoints | number:'1.0-0' }}/{{ cs.totalStoryPoints | number:'1.0-0' }} SP · {{ donePercent(cs) | number:'1.0-0' }}%</span>
+                  </div>
+                </div>
+                <button class="issues-toggle sm" (click)="showSprintIssues[cs.jiraSprintId] = !showSprintIssues[cs.jiraSprintId]">
+                  {{ showSprintIssues[cs.jiraSprintId] ? '▾ Masquer' : '▸ Voir' }} {{ cs.issues.length }} issues
+                </button>
+                <div class="issues-list" *ngIf="showSprintIssues[cs.jiraSprintId]">
+                  <div class="issue-row" *ngFor="let issue of cs.issues">
+                    <a class="issue-key" [href]="issueUrl(issue.issueKey)" target="_blank" (click)="$event.stopPropagation()">{{ issue.issueKey }}</a>
+                    <span class="issue-type" [class.bug]="issue.issueType === 'Bug'">{{ issue.issueType }}</span>
+                    <span class="issue-summary">{{ issue.summary }}</span>
+                    <span class="issue-status"
+                      [style.background]="issueStatusColor(issue.statusCategory).bg"
+                      [style.color]="issueStatusColor(issue.statusCategory).color">
+                      {{ issue.statusName }}
+                    </span>
+                    <span class="issue-sp" *ngIf="issue.storyPoints">{{ issue.storyPoints }} SP</span>
+                    <span class="issue-assignee">{{ issue.assigneeName || '—' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </ng-container>
+        </div>
+
+        <!-- ═══ Membres ═══ -->
+        <div class="members-title">Membres ({{ sq.members.length }})</div>
+        <div class="member-card" *ngFor="let m of sq.members">
+          <div class="member-row">
+            <span class="avatar" [style.background]="sq.color + '22'" [style.color]="sq.color">{{ initials(m.name) }}</span>
+            <span class="member-name">{{ m.name }}</span>
+            <span class="role-badge" [style.background]="RC[m.role].bg" [style.color]="RC[m.role].color">{{ RC[m.role].abbr }}</span>
+            <button class="sm-btn remove member-remove" (click)="removeMember(sq.id, m.id)">✕</button>
+          </div>
+          <div class="member-meta">
+            <span class="meta-field">🪪 {{ m.employeeCode || '—' }}</span>
+            <span class="meta-field">👤 {{ m.username || '—' }}</span>
+            <span class="meta-field github-field">
+              <a *ngIf="m.github" [href]="'https://github.com/' + m.github" target="_blank">{{ m.github }}</a>
+              <span *ngIf="!m.github">—</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="add-member-section">
+          <div class="add-member-row">
+            <input class="add-member-input" placeholder="Nom..." [(ngModel)]="newMemberName[sq.id]" (keyup.enter)="addMember(sq.id)">
+            <select class="role-select" [(ngModel)]="newMemberRole[sq.id]">
+              <option *ngFor="let r of roleEntries()" [value]="r[0]">{{ r[1].label }}</option>
+            </select>
+          </div>
+          <div class="add-member-row">
+            <input class="add-member-input" placeholder="Code employé" [(ngModel)]="newMemberCode[sq.id]">
+            <input class="add-member-input" placeholder="Username" [(ngModel)]="newMemberUsername[sq.id]">
+            <input class="add-member-input" placeholder="GitHub" [(ngModel)]="newMemberGithub[sq.id]">
+            <button class="add-btn sm" [disabled]="isSaving('new-m-' + sq.id)" (click)="addMember(sq.id)">
+              {{ isSaving('new-m-' + sq.id) ? '⏳' : '+' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add squad form -->
+    <div class="add-squad-global">
+      <input class="add-squad-input" placeholder="Nom de l'escouade..." [(ngModel)]="newSquadName" (keyup.enter)="addSquad()">
+      <input class="board-id-input" placeholder="Board ID" [(ngModel)]="newSquadBoard" style="max-width:100px">
+      <button class="add-btn" [disabled]="isSaving('new-sq')" (click)="addSquad()">
+        {{ isSaving('new-sq') ? '⏳' : '+ Ajouter' }}
+      </button>
+    </div>
+  </div>
+</section>

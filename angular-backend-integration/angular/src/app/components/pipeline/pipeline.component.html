@@ -1,0 +1,112 @@
+<!-- Boîtes environnement -->
+<div class="pipe-row">
+  <ng-container *ngFor="let envKey of envKeys; let i = index; trackBy: trackByEnvKey">
+
+    <!-- Connecteur entre envs -->
+    <div class="connector" *ngIf="i > 0">
+      <div class="arrow"
+        [style.background]="hasSameVersionAsPrevious(i, envKey)
+          ? 'linear-gradient(90deg,' + envMeta(envKeys[i-1]).color + ',' + envMeta(envKey).color + ')'
+          : '#E2E8F0'"
+        [style.height.px]="hasSameVersionAsPrevious(i, envKey) ? 3 : 2">
+        <div class="flow-dot" *ngIf="hasSameVersionAsPrevious(i, envKey)"></div>
+      </div>
+    </div>
+
+    <!-- Boîte env -->
+    <div class="env-col">
+      <div class="box" [class.active]="selectedEnv === envKey"
+        [style.--ec]="envMeta(envKey).color" (click)="selectEnv(envKey, $event)">
+        <div class="pkg"
+          [style.background]="statusMeta(app.envs[envKey].status).color + '12'"
+          [style.color]="statusMeta(app.envs[envKey].status).color">📦</div>
+        <div class="env-label" [style.color]="envMeta(envKey).color">{{ envMeta(envKey).label }}</div>
+        <div class="version" [style.color]="app.color">v{{ app.envs[envKey].version }}</div>
+        <div class="status"
+          [style.color]="statusMeta(app.envs[envKey].status).color"
+          [style.background]="statusMeta(app.envs[envKey].status).color + '12'">
+          {{ statusMeta(app.envs[envKey].status).icon }} {{ statusMeta(app.envs[envKey].status).label }}
+        </div>
+        <div class="env-meta">
+          {{ app.envs[envKey].instances }} inst. · {{ app.envs[envKey].uptime }}<br>{{ app.envs[envKey].lastDeploy }}
+        </div>
+        <div class="ver-tags">
+          <span *ngFor="let v of svc.getVersionsForEnv(app, envKey)" class="ver-tag"
+            [style.background]="app.color + '10'" [style.color]="app.color">
+            v{{ v | truncate:10 }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+</div>
+
+<!-- Section commits -->
+<div class="commits slide-in" *ngIf="selectedEnv">
+  <div class="commits-hdr">
+    <div class="hdr-left">
+      <span class="env-name" [style.color]="envMeta(selectedEnv!).color">
+        {{ envMeta(selectedEnv!).fullName | uppercase }}
+      </span>
+      <span class="sep">·</span>
+      <span class="branch">{{ app.envs[selectedEnv!].branch }}</span>
+    </div>
+    <div class="hdr-meta">
+      {{ app.envs[selectedEnv!].instances }} inst. ·
+      {{ app.envs[selectedEnv!].uptime }} ·
+      {{ app.envs[selectedEnv!].lastDeploy }}
+    </div>
+  </div>
+
+  <div class="ver-list">
+    <div *ngFor="let ver of svc.getVersionsForEnv(app, selectedEnv!); let vi = index; trackBy: trackByVersion"
+      class="ver-block" [class.current]="vi === 0"
+      [style.border-color]="vi === 0 ? app.color + '30' : null">
+
+      <div class="ver-hdr" (click)="toggleVersion(ver, $event)">
+        <div class="ver-left">
+          <span class="arrow-icon" [class.open]="svc.isVersionExpanded(ver, vi)">▸</span>
+          <span class="ver-name" [style.color]="vi === 0 ? app.color : null">v{{ ver }}</span>
+          <span *ngIf="vi === 0" class="cur-badge"
+            [style.background]="app.color + '15'" [style.color]="app.color">CURRENT</span>
+          <span class="c-count">{{ (app.commits[ver] || []).length }}c</span>
+          <span *ngFor="let ek of svc.getEnvsContainingVersion(app, ver)" class="env-pill"
+            [style.background]="envMeta(ek).color + '15'"
+            [style.color]="envMeta(ek).color">{{ envMeta(ek).label }}</span>
+        </div>
+        <div class="type-stats">
+          <span *ngFor="let s of svc.getCommitTypeStats(app.commits[ver] || [])" class="ts"
+            [style.background]="commitTypeMeta(s.type).bg + '18'"
+            [style.color]="commitTypeMeta(s.type).color">
+            {{ s.count }}{{ commitTypeMeta(s.type).label.charAt(0).toLowerCase() }}
+          </span>
+        </div>
+      </div>
+
+      <div class="c-list" *ngIf="svc.isVersionExpanded(ver, vi) && app.commits[ver]">
+        <div class="c-row" *ngFor="let c of app.commits[ver]; trackBy: trackByCommitSha">
+          <span class="c-type"
+            [style.background]="commitTypeMeta(c.type).bg"
+            [style.color]="commitTypeMeta(c.type).color">
+            {{ commitTypeMeta(c.type).label }}
+          </span>
+          <div class="c-body">
+            <div class="c-line1">
+              <a class="sha"
+                [href]="githubUrl + '/' + app.repo + '/commit/' + c.sha" target="_blank"
+                [style.color]="app.color" [style.border-color]="app.color + '44'"
+                (click)="$event.stopPropagation()">{{ c.sha }}</a>
+              <span class="msg">{{ c.message }}</span>
+            </div>
+            <div class="c-line2">
+              <a class="tk-link" [href]="jiraUrl + '/' + c.ticket" target="_blank"
+                (click)="$event.stopPropagation()">🎫 {{ c.ticket }}</a>
+              <span class="tk-title">{{ c.ticketTitle }}</span>
+            </div>
+            <div class="c-meta">{{ c.author }} <span class="dot">·</span> {{ c.date }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

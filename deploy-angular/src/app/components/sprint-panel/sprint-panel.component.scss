@@ -1,0 +1,34 @@
+$m: 'JetBrains Mono', monospace;
+
+.panel { border-radius: 10px; border: 1px solid #E2E8F0; background: #fff; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+.panel-hdr { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #F1F5F9; }
+.panel-title { font: 800 12px $m; display: flex; align-items: center; gap: 6px; }
+.panel-count { font: 700 9px $m; padding: 2px 8px; border-radius: 99px; }
+.empty { padding: 14px; text-align: center; font-size: 10px; color: #94A3B8; font-style: italic; }
+
+.squad { padding: 8px 12px; border-bottom: 1px solid #F1F5F9; &:last-child { border-bottom: none; } }
+.squad-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.squad-name { font-size: 10px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+.squad-dot { width: 7px; height: 7px; border-radius: 50%; }
+.squad-count { font: 700 8px $m; padding: 1px 5px; border-radius: 99px; background: #F8FAFC; color: #64748B; border: 1px solid #F1F5F9; }
+
+.ticket { display: flex; align-items: flex-start; gap: 7px; padding: 5px 0 5px 12px; border-left: 2px solid #E2E8F0; margin-left: 3px; margin-bottom: 3px; }
+.ticket-id { font: 700 9px $m; flex-shrink: 0; padding: 2px 5px; border-radius: 3px; border: 1px solid #E2E8F0; }
+.ticket-body { flex: 1; min-width: 0; }
+.ticket-name { font-size: 10px; font-weight: 500; }
+.meta { font-size: 8px; color: #64748B; margin-top: 2px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.sp { font: 800 7px $m; padding: 1px 4px; border-radius: 3px; background: rgba(0,135,78,.08); color: #00874E; }
+.pri { font: 800 7px $m; padding: 1px 4px; border-radius: 3px; }
+
+.progress-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
+.progress-track { flex: 1; height: 3px; border-radius: 99px; background: #F1F5F9; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 99px; }
+.progress-pct { font: 700 8px $m; }
+.branch { font: 400 8px $m; color: #64748B; margin-top: 2px; }
+
+.pr-row { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.pr-badge { font: 700 8px $m; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; }
+.pr-branch { font-size: 8px; color: #64748B; }
+.check-dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+.pr-comments { font-size: 8px; color: #64748B; margin-left: 3px; }
+.pr-created { font-size: 8px; color: #94A3B8; }

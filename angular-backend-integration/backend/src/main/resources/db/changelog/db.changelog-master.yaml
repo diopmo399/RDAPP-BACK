@@ -1,0 +1,315 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1-create-affect-version
+      author: deploy-config
+      changes:
+        - createTable:
+            tableName: affect_version
+            columns:
+              - column:
+                  name: id
+                  type: VARCHAR(50)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: name
+                  type: VARCHAR(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: VARCHAR(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: release_date
+                  type: DATE
+              - column:
+                  name: description
+                  type: VARCHAR(500)
+              - column:
+                  name: created_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+              - column:
+                  name: updated_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+
+  - changeSet:
+      id: 2-create-squad
+      author: deploy-config
+      changes:
+        - createTable:
+            tableName: squad
+            columns:
+              - column:
+                  name: id
+                  type: VARCHAR(50)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: name
+                  type: VARCHAR(100)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: color
+                  type: VARCHAR(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: board_id
+                  type: VARCHAR(50)
+              - column:
+                  name: created_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+              - column:
+                  name: updated_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+
+  - changeSet:
+      id: 3-create-squad-member
+      author: deploy-config
+      changes:
+        - createTable:
+            tableName: squad_member
+            columns:
+              - column:
+                  name: id
+                  type: VARCHAR(50)
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: squad_id
+                  type: VARCHAR(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: name
+                  type: VARCHAR(100)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: role
+                  type: VARCHAR(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: employee_code
+                  type: VARCHAR(20)
+              - column:
+                  name: username
+                  type: VARCHAR(50)
+              - column:
+                  name: github
+                  type: VARCHAR(100)
+              - column:
+                  name: created_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+        - addForeignKeyConstraint:
+            baseTableName: squad_member
+            baseColumnNames: squad_id
+            referencedTableName: squad
+            referencedColumnNames: id
+            constraintName: fk_member_squad
+            onDelete: CASCADE
+
+  - changeSet:
+      id: 4-seed-data
+      author: deploy-config
+      context: dev
+      changes:
+        - sqlFile:
+            path: db/changelog/seed-data.sql
+
+  - changeSet:
+      id: 5-create-sprint-sync
+      author: deploy-config
+      changes:
+        - createTable:
+            tableName: sprint_sync
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: jira_sprint_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: squad_id
+                  type: VARCHAR(50)
+              - column:
+                  name: name
+                  type: VARCHAR(200)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: state
+                  type: VARCHAR(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: goal
+                  type: VARCHAR(500)
+              - column:
+                  name: start_date
+                  type: TIMESTAMP
+              - column:
+                  name: end_date
+                  type: TIMESTAMP
+              - column:
+                  name: complete_date
+                  type: TIMESTAMP
+              - column:
+                  name: board_id
+                  type: BIGINT
+              - column:
+                  name: project_key
+                  type: VARCHAR(20)
+              - column:
+                  name: total_issues
+                  type: INT
+              - column:
+                  name: done_issues
+                  type: INT
+              - column:
+                  name: total_story_points
+                  type: DOUBLE
+              - column:
+                  name: done_story_points
+                  type: DOUBLE
+              - column:
+                  name: created_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+              - column:
+                  name: synced_at
+                  type: TIMESTAMP
+                  defaultValueComputed: CURRENT_TIMESTAMP
+        - addForeignKeyConstraint:
+            baseTableName: sprint_sync
+            baseColumnNames: squad_id
+            referencedTableName: squad
+            referencedColumnNames: id
+            constraintName: fk_sprint_sync_squad
+            onDelete: SET NULL
+        - createIndex:
+            tableName: sprint_sync
+            indexName: idx_sprint_sync_jira_id
+            unique: true
+            columns:
+              - column:
+                  name: jira_sprint_id
+        - createIndex:
+            tableName: sprint_sync
+            indexName: idx_sprint_sync_squad
+            columns:
+              - column:
+                  name: squad_id
+
+  - changeSet:
+      id: 6-create-sprint-issue
+      author: deploy-config
+      changes:
+        - createTable:
+            tableName: sprint_issue
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: sprint_sync_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: issue_key
+                  type: VARCHAR(30)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: summary
+                  type: VARCHAR(500)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: issue_type
+                  type: VARCHAR(30)
+              - column:
+                  name: status_name
+                  type: VARCHAR(50)
+              - column:
+                  name: status_category
+                  type: VARCHAR(20)
+              - column:
+                  name: priority
+                  type: VARCHAR(20)
+              - column:
+                  name: story_points
+                  type: DOUBLE
+              - column:
+                  name: assignee_name
+                  type: VARCHAR(100)
+              - column:
+                  name: assignee_username
+                  type: VARCHAR(50)
+              - column:
+                  name: fix_version
+                  type: VARCHAR(50)
+              - column:
+                  name: created_at
+                  type: VARCHAR(30)
+              - column:
+                  name: updated_at
+                  type: VARCHAR(30)
+              - column:
+                  name: resolution_date
+                  type: VARCHAR(30)
+        - addForeignKeyConstraint:
+            baseTableName: sprint_issue
+            baseColumnNames: sprint_sync_id
+            referencedTableName: sprint_sync
+            referencedColumnNames: id
+            constraintName: fk_sprint_issue_sync
+            onDelete: CASCADE
+        - createIndex:
+            tableName: sprint_issue
+            indexName: idx_sprint_issue_key
+            columns:
+              - column:
+                  name: issue_key
+
+  - changeSet:
+      id: 7-add-affect-version-labels-components
+      author: dylan
+      changes:
+        - addColumn:
+            tableName: sprint_issue
+            columns:
+              - column:
+                  name: affect_version
+                  type: VARCHAR(100)
+              - column:
+                  name: labels
+                  type: VARCHAR(500)
+              - column:
+                  name: components
+                  type: VARCHAR(500)
+        - createIndex:
+            tableName: sprint_issue
+            indexName: idx_sprint_issue_labels
+            columns:
+              - column:
+                  name: labels

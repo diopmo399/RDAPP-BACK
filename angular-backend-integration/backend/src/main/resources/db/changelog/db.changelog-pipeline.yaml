@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - include:
+      file: db/changelog/db.changelog-master.yaml
+      # (Existing: squads, affect_versions, squad_members — changelogs 001, 002)
+
+  - include:
+      file: db/changelog/003-pipeline-tables.yaml
+
+  - changeSet:
+      id: 006-seed-pipeline-data
+      author: deploy-dashboard
+      changes:
+        - sqlFile:
+            path: db/changelog/seed-pipeline-data.sql
+            relativeToChangelogFile: false

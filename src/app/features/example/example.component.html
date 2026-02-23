@@ -1,0 +1,161 @@
+<div class="container">
+  <div class="card">
+    <h1>Inscription utilisateur</h1>
+    <p class="subtitle">Exemple d'utilisation du Signal Store NgRx</p>
+
+    <!-- FORMULAIRE -->
+    <form [formGroup]="registrationForm" (ngSubmit)="onSubmit()">
+      <!-- Nom -->
+      <div class="form-group">
+        <label for="nom">Nom *</label>
+        <input
+          type="text"
+          id="nom"
+          formControlName="nom"
+          [class.invalid]="isFieldInvalid('nom')"
+          placeholder="Entrez votre nom"
+        />
+        @if (isFieldInvalid('nom')) {
+          <span class="error-message">{{ getFieldError('nom') }}</span>
+        }
+      </div>
+
+      <!-- Prénom -->
+      <div class="form-group">
+        <label for="prenom">Prénom *</label>
+        <input
+          type="text"
+          id="prenom"
+          formControlName="prenom"
+          [class.invalid]="isFieldInvalid('prenom')"
+          placeholder="Entrez votre prénom"
+        />
+        @if (isFieldInvalid('prenom')) {
+          <span class="error-message">{{ getFieldError('prenom') }}</span>
+        }
+      </div>
+
+      <!-- Email -->
+      <div class="form-group">
+        <label for="email">Email *</label>
+        <input
+          type="email"
+          id="email"
+          formControlName="email"
+          [class.invalid]="isFieldInvalid('email')"
+          placeholder="exemple@email.com"
+        />
+        @if (isFieldInvalid('email')) {
+          <span class="error-message">{{ getFieldError('email') }}</span>
+        }
+      </div>
+
+      <!-- Téléphone -->
+      <div class="form-group">
+        <label for="telephone">Téléphone *</label>
+        <input
+          type="tel"
+          id="telephone"
+          formControlName="telephone"
+          [class.invalid]="isFieldInvalid('telephone')"
+          placeholder="0123456789"
+        />
+        @if (isFieldInvalid('telephone')) {
+          <span class="error-message">{{ getFieldError('telephone') }}</span>
+        }
+      </div>
+
+      <!-- Mot de passe -->
+      <div class="form-group">
+        <label for="password">Mot de passe *</label>
+        <input
+          type="password"
+          id="password"
+          formControlName="password"
+          [class.invalid]="isFieldInvalid('password')"
+          placeholder="Minimum 8 caractères"
+        />
+        @if (isFieldInvalid('password')) {
+          <span class="error-message">{{ getFieldError('password') }}</span>
+        }
+      </div>
+
+      <!-- BOUTONS -->
+      <div class="button-group">
+        <button
+          type="submit"
+          class="btn-primary"
+          [disabled]="store.isLoading()"
+        >
+          @if (store.isLoading()) {
+            <span class="spinner"></span>
+            Envoi en cours...
+          } @else {
+            S'inscrire
+          }
+        </button>
+
+        <button
+          type="button"
+          class="btn-secondary"
+          (click)="resetForm()"
+          [disabled]="store.isLoading()"
+        >
+          Réinitialiser
+        </button>
+      </div>
+    </form>
+
+    <!-- MESSAGES DE SUCCÈS -->
+    @if (store.isSuccess()) {
+      <div class="alert alert-success">
+        <div class="alert-header">
+          <span class="alert-icon">✅</span>
+          <span class="alert-title">Inscription réussie !</span>
+          <button class="alert-close" (click)="dismissSuccess()">×</button>
+        </div>
+        <div class="alert-content">
+          @if (store.responseData(); as data) {
+            <p><strong>{{ data.message }}</strong></p>
+            <p>Bienvenue {{ data.prenom }} {{ data.nom }} !</p>
+            <p class="text-small">Email: {{ data.email }}</p>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- MESSAGES D'ERREUR -->
+    @if (store.hasError()) {
+      <div class="alert alert-error">
+        <div class="alert-header">
+          <span class="alert-icon">❌</span>
+          <span class="alert-title">Erreur</span>
+          <button class="alert-close" (click)="dismissError()">×</button>
+        </div>
+        <div class="alert-content">
+          <p>{{ store.errorMessage() }}</p>
+        </div>
+      </div>
+    }
+
+    <!-- INDICATEUR DE CHARGEMENT -->
+    @if (store.isLoading()) {
+      <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <p>Envoi en cours...</p>
+      </div>
+    }
+  </div>
+
+  <!-- DEBUG INFO (à retirer en production) -->
+  <div class="debug-info">
+    <h3>État du Store (Debug)</h3>
+    <pre>{{ {
+  loading: store.isLoading(),
+  success: store.isSuccess(),
+  hasError: store.hasError(),
+  error: store.errorMessage(),
+  data: store.responseData()
+} | json }}</pre>
+  </div>
+</div>
