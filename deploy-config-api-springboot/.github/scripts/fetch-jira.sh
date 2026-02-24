@@ -362,20 +362,19 @@ done
 
 # ── Écrire le payload bulk final ──
 
-SQUAD_PAYLOADS=$(cat "$SQUAD_PAYLOADS_FILE")
-
-# Valider que SQUAD_PAYLOADS est un JSON valide
-if [ -z "$SQUAD_PAYLOADS" ] || ! echo "$SQUAD_PAYLOADS" | jq empty 2>/dev/null; then
+# Valider que SQUAD_PAYLOADS_FILE contient du JSON valide
+if [ ! -f "$SQUAD_PAYLOADS_FILE" ] || ! jq empty "$SQUAD_PAYLOADS_FILE" 2>/dev/null; then
   echo "⚠️  SQUAD_PAYLOADS invalide, utilisation d'un tableau vide"
-  SQUAD_PAYLOADS="[]"
+  echo "[]" > "$SQUAD_PAYLOADS_FILE"
 fi
 
+# Utiliser --slurpfile au lieu de --argjson pour éviter "Argument list too long"
 jq -n \
-  --argjson squads "$SQUAD_PAYLOADS" \
+  --slurpfile squads "$SQUAD_PAYLOADS_FILE" \
   --arg runId "${GITHUB_RUN_ID:-unknown}" \
   --arg triggeredBy "${GITHUB_TRIGGERING_ACTOR:-schedule}" \
   '{
-    squads: $squads,
+    squads: $squads[0],
     runId: $runId,
     triggeredBy: $triggeredBy
   }' > /tmp/bulk-payload.json
@@ -383,12 +382,13 @@ jq -n \
 TOTAL_SIZE=$(wc -c < /tmp/bulk-payload.json | tr -d ' ')
 TOTAL_SIZE_KB=$((TOTAL_SIZE / 1024))
 TOTAL_SIZE_MB=$((TOTAL_SIZE_KB / 1024))
+SQUAD_COUNT=$(jq 'length' "$SQUAD_PAYLOADS_FILE" 2>/dev/null || echo "0")
 
 echo ""
 if [ "$TOTAL_SIZE_MB" -gt 0 ]; then
-  echo "═══ Payload prêt: $(cat "$SQUAD_PAYLOADS_FILE" | jq 'length') escouades, ${TOTAL_SIZE_MB} MB (${TOTAL_SIZE} bytes) ═══"
+  echo "═══ Payload prêt: ${SQUAD_COUNT} escouades, ${TOTAL_SIZE_MB} MB (${TOTAL_SIZE} bytes) ═══"
 else
-  echo "═══ Payload prêt: $(cat "$SQUAD_PAYLOADS_FILE" | jq 'length') escouades, ${TOTAL_SIZE_KB} KB (${TOTAL_SIZE} bytes) ═══"
+  echo "═══ Payload prêt: ${SQUAD_COUNT} escouades, ${TOTAL_SIZE_KB} KB (${TOTAL_SIZE} bytes) ═══"
 fi
 
 # Avertissement si le payload est très volumineux (> 10 MB)
